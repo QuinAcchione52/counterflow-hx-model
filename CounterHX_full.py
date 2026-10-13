@@ -90,7 +90,11 @@ def main():
     parser.add_argument('--input', default='Test.csv')
     parser.add_argument('--output', default='Test-output.xlsx')
     parser.add_argument('--segments', type=int, default=100)
-    parser.add_argument('--match-bulk', action='store_true', help='Infer CO2 inlet to match reference mean_CO2_C')
+    inlet_options = parser.add_mutually_exclusive_group()
+    inlet_options.add_argument('--match-bulk', dest='match_bulk', action='store_true', default=None,
+                               help='Infer CO2 inlet to match target_mean_CO2_C or reference mean_CO2_C')
+    inlet_options.add_argument('--fixed-inlet', dest='match_bulk', action='store_false',
+                               help='Use the CSV inlet as a fixed measured condition instead of inferring it')
     parser.add_argument('--bulk-temp', type=float, help='Single-case measured endpoint-mean CO2 temperature (C)')
     parser.add_argument('--roughness', type=float, help='Override CSV effective e/D')
     parser.add_argument('--reference', help='Reference CSV keyed by Case, e.g. experimental_targets.csv')
@@ -125,7 +129,9 @@ def main():
     for _,row in df.iterrows():
         target=None
         target_bulk=None
-        if args.match_bulk:
+        match_bulk = (args.match_bulk if args.match_bulk is not None
+                      else pd.notna(row.get('target_mean_CO2_C', float('nan'))))
+        if match_bulk:
             target_bulk = (args.bulk_temp if args.bulk_temp is not None
                            else row.get('target_mean_CO2_C', row.get('experimental_mean_CO2_C')))
             if target_bulk is None or pd.isna(target_bulk):

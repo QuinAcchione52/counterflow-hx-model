@@ -24,8 +24,10 @@ The thesis specifies 0.625 inch OD and 0.049 inch wall: ID **13.3858 mm**, wall
 **1.2446 mm**, OD **15.875 mm**. The technical note rounds the wall to 1.2 mm;
 this input uses the thesis's inch dimensions. Water gap is a radial gap.
 The user confirmed that the CO₂ inlet is a guess chosen to reproduce the paper's mean bulk temperature. `target_mean_CO2_C=35.23` and `target_htc_W_m2K=2642`
-are supplied for May27_10. Use `--match-bulk` to infer the inlet instead of fixing
-the guess. The water inlet is held at the supplied 20.7 °C; its experimental
+are supplied for May27_10. When `target_mean_CO2_C` is present, the runner infers the inlet by default
+instead of fixing the guess. Use `--fixed-inlet` only when you want to hold the
+supplied inlet fixed. `--match-bulk` explicitly enables inference from the
+reference table for other inputs. The water inlet is held at the supplied 20.7 °C; its experimental
 provenance remains unverified.
 
 Outputs contain case profiles and a `Summary` sheet, plus a companion summary
@@ -159,3 +161,11 @@ tests cover the laminar limiting solution, experimental HTC definition, inlet
 wall correlation, counterflow boundaries/energy conservation, fitting behavior,
 and inlet inference. A real bounded fit to 1000 W/(m² K) at 40 segments also
 returned e/D ≈ 0.00883879 and reproduced the target.
+
+
+For the supplied May27_10 CSV, changing `ep_max (e/Dh)` and running
+`python CounterHX_full.py` now keeps the mean bulk temperature at 35.23 °C
+by default. Alternatively use `--roughness 0.01` to override e/D without
+rewriting the CSV. `--fixed-inlet` disables this inverse-temperature step for
+cases where the inlet is a measured condition. Automatic fitting still requires
+`--fit`; large extrapolated fitting bounds require `--allow-extrapolation`.
