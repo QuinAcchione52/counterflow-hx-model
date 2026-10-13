@@ -89,3 +89,28 @@ def test_large_roughness_fit_requires_explicit_extrapolation(solved):
     row,p=solved
     with pytest.raises(ValueError,match='allow_extrapolation'):
         fit_case(row,2642,bounds=(0,1),segments=10)
+
+
+def test_pressure_fit_preserves_thermal_solution_and_acceleration(solved):
+    from pressure_calibration import fit_hydraulic_multiplier
+    row,p=solved
+    original_summary=dict(p.attrs['summary'])
+    factor,fitted=fit_hydraulic_multiplier(p,.0604)
+    assert factor > 1
+    assert fitted.CO2_dp_cumulative_psi.iloc[-1]==pytest.approx(.0604,abs=1e-12)
+    pd.testing.assert_frame_equal(fitted[['CO2b','CO2w','htc_CO2','Q']],p[['CO2b','CO2w','htc_CO2','Q']])
+    pd.testing.assert_series_equal(fitted.CO2_acc,p.CO2_acc)
+    assert p.attrs['summary']==original_summary
+    assert fitted.attrs['summary']['htc_spencer_W_m2K']==original_summary['htc_spencer_W_m2K']
+    for target in [-1.,float('nan'),0.]:
+        with pytest.raises(ValueError):fit_hydraulic_multiplier(p,target)
+
+
+def test_pressure_roughness_recovers_baseline_and_exposes_unphysical_fit(solved):
+    from pressure_calibration import fit_pressure_only_roughness
+    row,p=solved
+    ep,dp=fit_pressure_only_roughness(p,row,p.CO2_dp_cumulative_psi.iloc[-1])
+    assert ep==pytest.approx(.001,abs=1e-6)
+    ep,dp=fit_pressure_only_roughness(p,row,.0604)
+    assert ep > 1
+    assert dp==pytest.approx(.0604,abs=1e-10)
