@@ -23,7 +23,9 @@ def calibrate_one(row_dict, segments, max_ep):
              'assumed_water_flow_kg_s':row['m_H2O (kg/s)'],
              'experimental_htc_uncertainty_percent':row.experimental_htc_uncertainty_percent,
              'nominal_heat_flux_W_m2':row.nominal_heat_flux_W_m2,
-             'segments':segments}
+             'segments':segments,
+             'baseline_model':row.get('CO2_baseline_model','none'),
+             'baseline_model_extrapolated':row.get('CO2_baseline_model_extrapolated',False)}
     try:
         lo=evaluate(0.)
         physical_cap=evaluate(min(.05,max_ep))
@@ -66,6 +68,8 @@ def main():
     parser.add_argument('--workers',type=int,default=1,help='Separate processes; property objects cannot be shared between threads')
     parser.add_argument('--ep-max',type=float,default=.05)
     parser.add_argument('--allow-extrapolation',action='store_true')
+    parser.add_argument('--smooth-baseline-model', help='Optional independently smooth-trained baseline JSON')
+    parser.add_argument('--allow-baseline-extrapolation',action='store_true')
     parser.add_argument('--case',help='Run only one named case')
     args=parser.parse_args()
     if not 0<args.ep_max<=1:parser.error('0 < --ep-max <= 1 required')
@@ -75,6 +79,9 @@ def main():
     if args.case:
         data=data[data.Case==args.case]
     if data.empty:parser.error('No matching input cases')
+    if args.smooth_baseline_model:
+        from smooth_baseline import apply_model
+        data=apply_model(data,args.smooth_baseline_model,args.allow_baseline_extrapolation)
     summaries=[]; profiles={}
     output=Path(args.output)
     with ProcessPoolExecutor(max_workers=args.workers) as executor:

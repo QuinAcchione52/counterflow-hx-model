@@ -1,0 +1,63 @@
+{
+  "schema": "smooth-DH-global-factor-v1",
+  "backend": "HEOS",
+  "features": [
+    "intercept",
+    "delta_Tpc_over_5K",
+    "delta_Tpc_squared",
+    "log_G_over_30",
+    "log_nominal_flux_over_2500"
+  ],
+  "coefficients": [
+    0.8826764697286168,
+    -0.2468073183259544,
+    -0.6341365449327696,
+    -0.9901939194498237,
+    0.4285521449552018
+  ],
+  "domain": {
+    "delta_Tpc_K": [
+      -8.300929992446115,
+      4.6833108848236975
+    ],
+    "mass_flux_kg_m2s": [
+      21.317816015504164,
+      34.81909949199013
+    ],
+    "nominal_flux_W_m2": [
+      2000.0,
+      3000.0
+    ],
+    "pressure_MPa": [
+      7.764,
+      8.243
+    ]
+  },
+  "training_cases": 38,
+  "segments": 20,
+  "water_inlet_C": 20.7,
+  "water_mass_flow_kg_s": 0.087,
+  "interpretation": "Empirical correction conditional on assumed water conditions; not physical roughness or independent correlation validation.",
+  "validation": {
+    "method": "Leave-one-case-out; fitted factor for held-out case excluded from regression",
+    "uncorrected_MAE_percent": 46.725560798974605,
+    "heldout_MAE_percent": 14.223023556582833,
+    "heldout_within_5_percent": 9,
+    "heldout_max_abs_error_percent": 43.45952484740751
+  },
+  "fixed_inputs": {
+    "D (mm)": 13.3858,
+    "L (mm)": 1000.0,
+    "wall thickness (mm)": 1.2446,
+    "water gap (mm)": 28.4353,
+    "Kp": 14.4,
+    "m_H2O (kg/s)": 0.087,
+    "T_H2O (C)": 20.7,
+    "P (atm)": 1.05,
+    "T_amb (C)": 22.0,
+    "Q_leak_slope": -8.196,
+    "Q_leak_intercept": -4.9433,
+    "U_amb": 15.0,
+    "d_outer_mm": 88.9
+  }
+}

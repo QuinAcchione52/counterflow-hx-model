@@ -51,7 +51,8 @@ import pandas as pd
 import numpy as np
 import CoolProp.CoolProp as CP
 from Correlations import DHC
-from Correlations import Gniel
+from Correlations import Gniel, hydraulic_friction
+from roughness import build_roughness
 import math
 import os
 from scipy.optimize import brentq, root
@@ -60,7 +61,7 @@ from scipy.optimize import brentq, root
 #%% function call
 def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, Kp, ep, pro, p, Constant, q_CO2_i,
                 whole_section=False, T_ambient=25., U_amb=0., d_outer_mm=0., Q_leak_slope=None, Q_leak_intercept=0.,
-                max_iter=100, tol_T=1e-4, tol_Q=1e-6, relax=0.7, verbose=True, segments=None, water_htc_multiplier=1.0, target_mean_CO2_C=None):
+                max_iter=100, tol_T=1e-4, tol_Q=1e-6, relax=0.7, verbose=True, segments=None, water_htc_multiplier=1.0, target_mean_CO2_C=None, co2_friction_model='dh_roughness', co2_baseline_multiplier=1.0):
     """
     New optional arguments (defaults keep CounterHX_full.py working unchanged):
         max_iter : maximum number of outer (correlation) iterations
@@ -72,17 +73,18 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
     """
 
     #Fluid Phases
-    PHASES = {
-        0: "invalid",
-        1: "liquid",
-        2: "two-phase",
-        3: "gas",
-        4: "supercritical",
-        5: "supercritical_liquid",
-        6: "supercritical_gas",
-        7: "critical"
-    }
+    PHASES={CP.iphase_liquid:'liquid',CP.iphase_gas:'gas',
+            CP.iphase_twophase:'two_phase',CP.iphase_supercritical:'supercritical',
+            CP.iphase_supercritical_liquid:'supercritical_liquid',
+            CP.iphase_supercritical_gas:'supercritical_gas',
+            CP.iphase_critical_point:'critical',CP.iphase_unknown:'unknown'}
 
+    if not all(np.isfinite(v) for v in [m_dot_CO2,P_CO2,m_dot_H2O,T_H2O,P_H2O,D,wt,wg,L,Kp,q_CO2_i]):
+        raise ValueError('Flows, pressure, geometry, water temperature and heat-flux input must be finite')
+    if P_CO2<=0 or P_H2O<=0:
+        raise ValueError('Both operating pressures must be positive')
+    if not np.isfinite(co2_baseline_multiplier) or co2_baseline_multiplier<=0:
+        raise ValueError('CO2 baseline multiplier must be positive and finite')
     if not np.isfinite(water_htc_multiplier) or water_htc_multiplier <= 0:
         raise ValueError("water_htc_multiplier must be positive and finite")
     if whole_section:
@@ -96,6 +98,8 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
         if Constant or not np.isfinite(target_mean_CO2_C) or target_mean_CO2_C <= T_H2O:
             raise ValueError("Inverse bulk target must exceed water inlet and requires the coupled thermal solver")
         T_CO2 = float(target_mean_CO2_C) + .3  # initial guess only, not an experimental inlet
+
+    if not np.isfinite(T_CO2):raise ValueError('CO2 inlet must be finite unless a valid inverse mean target is supplied')
 
     # inputs Pipe Geometry
     d_CO2 = D   # Inner diameter (mm) of CO2 pipe [e.g. 13.3858]
@@ -117,7 +121,7 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
     ASH2O = CP.AbstractState(os.environ.get('HX_PROPERTY_BACKEND', 'HEOS'),F2)
 
     # other inputs
-    ep_max_input = float(ep) if np.isscalar(ep) else float(np.ravel(ep)[0])
+
     fg = 0.02   #inital guess at friction factor
     pro_key = str(pro).strip().replace(' ', '')
     n = int(segments) + 1 if segments is not None else max(2, int(round(L/10)) + 1)      #number of points along pipe
@@ -188,24 +192,9 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
     for k in range(n):
         store(H2O, k, ASH2O, 'b'); store(H2O, k, ASH2O, 'w')
 
-    #% roughness profile (Constant, Step, Linear, Sine)
-    rough = np.zeros(n)
-    if pro_key == 'Constant':
-        rough = ep_max_input * np.ones(n, dtype=np.float64)
-    elif pro_key == 'Step':
-        num = np.linspace(0, ep_max_input, int(round(p)))
-        step = np.linspace(0, n, int(round(p)) + 1, dtype=int)
-        for i in range(int(round(p))):
-            rough[step[i]:step[i + 1]] = num[i]
-    elif pro_key == 'Linear':
-        rough = ep_max_input * (x) / L
-    elif pro_key == 'Sine':
-        rough = ep_max_input * np.abs(np.sin(p * np.pi * x / L))
-    else:
-        raise ValueError(
-            f"Unknown roughness profile '{pro}'. "
-            "Use Constant, Step, Linear, or Sine."
-        )
+    rough=build_roughness(x,ep,pro,p)
+    if co2_friction_model=='dang_hihara' and np.any(rough!=0):
+        raise ValueError('Original smooth Dang-Hihara mode requires an all-zero profile')
 
     # ------------------------------------------------------------------
     # Heat transfer storage
@@ -213,7 +202,11 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
     #   Node arrays: Nu, htc, R1, R3, U, f, Tf
     #   Sign: Q < 0 means heat leaves CO2 (CO2 is cooled).
     # ------------------------------------------------------------------
-    Q = np.zeros(n);      Q[:nseg] = q_CO2_i * As_CO2      # initial guess
+    Q = np.zeros(n)
+    if Constant:
+        Q[:nseg] = q_CO2_i*As_CO2  # prescribed physical flux
+    # Coupled runs start at zero flux: the arbitrary seed must not create a
+    # subfreezing water-wall state before the first heat-balance solve.
     Q_leak = np.zeros(n)
     lmtd = np.zeros(n);   dT = np.zeros(n)
     Nu_CO2 = np.zeros(n); htc_CO2 = np.zeros(n)
@@ -221,6 +214,8 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
     R1 = np.zeros(n);     R3 = np.zeros(n);  U = np.zeros(n)
     f_CO2 = np.zeros(n);  f_H2O = np.zeros(n)
     Tf_CO2 = np.zeros(n); Tf_H2O = np.zeros(n)
+    diagnostic={key:np.zeros(n) for key in ["Re_film","Cp_bulk","Cp_integrated","Pr_used","k_film","wall_flux_residual_W_m2"]}
+    pr_branch=[""]*n
 
     # Linear heat leakage: one total from your fit (based on inlet water T), spread over the segments
     if use_linear_Q_leak:
@@ -334,16 +329,19 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
         Qtot_prev = Q[:nseg].sum()
 
         # node heat rate per segment-length, from current segment Q
-        Qn = node_avg(Q[:nseg])
+        Qn = (node_avg(Q[:nseg]) if Constant or U_prev is None
+              else -U_prev*As_CO2*(CO2['Tb']-H2O['Tb']))
 
         # ---- 1. Correlations at every node (CO2 and water at the SAME position k) ----
         for k in range(n):
             ## CO2 side: Dang & Hihara
             DH = DHC(CO2['Tb'][k], CO2['Tw'][k], CO2['P'][k], d_CO2, G1,
-                     Qn[k] / As_CO2, F1, k, float(rough[k]), fg)
+                     Qn[k] / As_CO2, F1, k, float(rough[k]), fg, friction_model=co2_friction_model, baseline_multiplier=co2_baseline_multiplier)
             Nu_CO2[k], htc_CO2[k] = DH.Nu[0], DH.htc[0]
             f_CO2[k], Tf_CO2[k] = DH.f[0], DH.Tf[0]
             Tw_inner = DH.Tw[0]
+            for key in diagnostic:diagnostic[key][k]=DH[key].iloc[0]
+            pr_branch[k]=DH.Pr_branch.iloc[0]
             ASCO2.update(CP.PT_INPUTS, CO2['P'][k], Tw_inner)
             store(CO2, k, ASCO2, 'w')
 
@@ -358,8 +356,7 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
             # Outer wall = inner wall minus conduction drop across the tube wall.
             # Heat leaving CO2 through the wall = -Qn  ->  Tw_outer = Tw_inner + Qn*R2
             Tw_outer = Tw_inner + Qn[k] * R2
-            Tw_clamp = max(274.0, min(450.0, Tw_outer))   # keep water liquid in REFPROP
-            ASH2O.update(CP.PT_INPUTS, H2O['P'][k], Tw_clamp)
+            ASH2O.update(CP.PT_INPUTS, H2O['P'][k], Tw_outer)
             store(H2O, k, ASH2O, 'w')
             # thermal resistances and U at node k (both sides at the same position)
             h1 = max(htc_CO2[k], 1.0)
@@ -450,7 +447,10 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
         dT_change = max(np.max(np.abs(CO2['Tb'] - Tc_prev)), np.max(np.abs(H2O['Tb'] - Th2o_prev)))
         Qtot = Q[:nseg].sum()
         dQ_rel = abs(Qtot - Qtot_prev) / max(abs(Qtot), 1e-12)
-        if j >= 1 and dT_change < tol_T and dQ_rel < tol_Q and np.max(np.abs(CO2['Tw']-wall_prev)) < tol_T:
+        local_node_Q=node_avg(Q[:nseg]) if Constant else -U*As_CO2*(CO2['Tb']-H2O['Tb'])
+        water_wall_residual=htc_H2O*(H2O['Tw']-H2O['Tb'])+local_node_Q/As_H2O
+        wall_balance_relative=float(np.max(np.abs(water_wall_residual)/np.maximum(1.,np.abs(local_node_Q/As_H2O))))
+        if j >= 1 and dT_change < tol_T and dQ_rel < tol_Q and np.max(np.abs(CO2['Tw']-wall_prev)) < tol_T and (Constant or wall_balance_relative<1e-5):
             converged = True
             break
 
@@ -468,12 +468,14 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
     # ------------------------------------------------------------------
     u_CO2 = G1 / CO2['rhob']
     u_H2O = G2 / H2O['rhob']
+    Re_hydraulic=G1*d_CO2/CO2['mub']
+    f_hydraulic=np.array([hydraulic_friction(float(re),float(e)) for re,e in zip(Re_hydraulic,rough)])
     CO2_Visc = np.zeros(n); CO2_acc = np.zeros(n)
     H2O_Visc = np.zeros(n); H2O_acc = np.zeros(n)
     for k in range(n):
         if k >= 1:
             rho_avg = 0.5 * (CO2['rhob'][k - 1] + CO2['rhob'][k])     # bulk density over segment
-            CO2_Visc[k] = f_CO2[k] * dx / d_CO2 * G1**2 / (2 * rho_avg)
+            CO2_Visc[k] = dx/d_CO2*G1**2/4*(f_hydraulic[k-1]/CO2['rhob'][k-1]+f_hydraulic[k]/CO2['rhob'][k])
             CO2_acc[k] = G1**2 * (1 / CO2['rhob'][k] - 1 / CO2['rhob'][k - 1])
         if k <= n - 2:
             rho_avg = 0.5 * (H2O['rhob'][k] + H2O['rhob'][k + 1])
@@ -492,6 +494,7 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
         out[-1] = np.nan
         return out
 
+    node_Q_final=node_avg(Q[:nseg]) if Constant else -U*As_CO2*(CO2['Tb']-H2O['Tb'])
     q_CO2_seg = Q / As_CO2
     q_H2O_seg = -Q / As_H2O
 
@@ -511,6 +514,21 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
         'q_H2O'     : seg_col(q_H2O_seg),
         'Q_leak'    : seg_col(Q_leak),
         'lmtd'      : seg_col(lmtd),
+        'CO2_heat_friction_factor':f_CO2,
+        'CO2_hydraulic_friction_factor':f_hydraulic,
+        'CO2_phase_bulk':CO2['Phaseb'],
+        'CO2_Pr_branch':pr_branch,
+        'CO2_Re_film':diagnostic['Re_film'],
+        'CO2_Cp_bulk_J_kgK':diagnostic['Cp_bulk'],
+        'CO2_Cp_integrated_J_kgK':diagnostic['Cp_integrated'],
+        'CO2_Pr_used':diagnostic['Pr_used'],
+        'CO2_k_film_W_mK':diagnostic['k_film'],
+        'CO2_node_heat_flux_W_m2':node_Q_final/As_CO2,
+        'H2O_node_heat_flux_W_m2':-node_Q_final/As_H2O,
+        'CO2_correlation_wall_flux_residual_W_m2':diagnostic['wall_flux_residual_W_m2'],
+        'CO2_final_wall_flux_residual_W_m2':htc_CO2*(CO2['Tw']-CO2['Tb'])-node_Q_final/As_CO2,
+        'H2O_final_wall_flux_residual_W_m2':htc_H2O*(H2O['Tw']-H2O['Tb'])+node_Q_final/As_H2O,
+        'wall_conduction_residual_K':CO2['Tw']-H2O['Tw']+node_Q_final*R2,
         'Nu_CO2'    : Nu_CO2,
         'htc_CO2'   : htc_CO2,
         'Nu_H2O'    : Nu_H2O,
@@ -598,6 +616,14 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
         'property_backend': os.environ.get('HX_PROPERTY_BACKEND', 'HEOS'),
         'iterations': n_sweeps, 'converged': converged,
         'water_htc_multiplier': float(water_htc_multiplier),
+        'CO2_heat_friction_model':co2_friction_model,
+        'CO2_baseline_correction_multiplier':float(co2_baseline_multiplier),
+        'CO2_baseline_is_calibrated':bool(co2_baseline_multiplier!=1),
+        'CO2_pressure_friction_model':'bulk_Re_Colebrook',
+        'CO2_mass_flux_kg_m2s':G1,
+        'water_wall_balance_max_relative_residual':wall_balance_relative,
+        'CO2_diameter_outside_cited_DH_database':not (0.001<=d_CO2<=0.006),
+        'CO2_mass_flux_below_cited_200_kg_m2s':G1<200,
         'water_htc_mean_W_m2K': float(np.mean(htc_H2O)),
         'CO2_energy_residual_W': float(duty_CO2 + total_Q),
         'water_energy_residual_W': float(duty_H2O + total_Q + total_Q_leak),

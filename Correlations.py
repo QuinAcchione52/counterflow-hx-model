@@ -48,113 +48,101 @@ def _warn_extrapolation():
     warnings.warn("e/D > 0.05 is an extrapolated calibration parameter, not validated physical roughness", RuntimeWarning, stacklevel=3)
 
 
-def DHC(Tb,Tw,P,D,G,q,fluid,count,ep,f):
+def colebrook(Re, ep):
+    """Darcy friction: solve the implicit turbulent Colebrook equation in 1/sqrt(f)."""
+    if not math.isfinite(Re) or Re<=0 or not math.isfinite(ep) or not 0<=ep<=1:
+        raise ValueError('Positive Reynolds number and finite e/D in 0..1 required')
+    inv=7.
+    for _ in range(100):
+        updated=-2*math.log10(ep/3.7+2.51*inv/Re)
+        if updated<=0:raise ValueError('Colebrook has no positive inverse-friction solution')
+        if abs(updated-inv)<1e-11:return updated**-2
+        inv=updated
+    raise RuntimeError('Colebrook iteration did not converge')
+
+
+def heat_friction(Re_f,ep,model='dh_roughness'):
+    """Original DH smooth friction, or explicitly empirical roughness extensions.
+
+    dh_roughness keeps the original smooth limit and uses the Colebrook rough /
+    smooth friction ratio. This extension is not published Dang-Hihara physics.
+    colebrook reproduces the previous direct replacement. dang_hihara is smooth only.
     """
-    Dang & Hihara corroelation
+    if not math.isfinite(Re_f) or Re_f<=0 or not math.isfinite(ep) or not 0<=ep<=1:
+        raise ValueError('Heat friction requires positive finite film Re and e/D in 0..1')
+    smooth=(1.82*math.log10(Re_f)-1.64)**-2
+    if model=='dang_hihara':
+        if ep!=0:raise ValueError('Original Dang-Hihara mode requires e/D=0')
+        return smooth
+    if model=='colebrook':return colebrook(Re_f,ep)
+    if model=='dh_roughness':return smooth*colebrook(Re_f,ep)/colebrook(Re_f,0.)
+    raise ValueError('CO2 heat friction must be dang_hihara, dh_roughness, or colebrook')
 
-    Parameters
-    ----------
-    Tb : Bulk temperature of annular fluid
-    Tw : Wall temperature of inner wall in annulus
-    P : Pressure of annular fluid
-    D : pipe Diameter
-    G : Mass flux of fluid
-    q : Heat flux into fluid
-    fluid : type of fluid being used
-    count : Position along pipe
-    ep : Epsilon (relitive roughness (ep/Dh))
 
-    Returns
-    -------
-    Tw : Wall temperature
-    Tf : Film temperature
-    htc : Heat Transfer Coefficient
-    Nu : Nusselt Number
-    f : Friction factor (Darcy)
+def hydraulic_friction(Re,ep):
+    """Mechanical Darcy friction uses BULK Reynolds number, not film Reynolds."""
+    if not math.isfinite(Re) or Re<=0:raise ValueError('Positive finite Reynolds number required')
+    if Re<=2300:return 64/Re
+    if Re>=4000:return colebrook(Re,ep)
+    weight=(Re-2300)/1700
+    return (1-weight)*64/Re+weight*colebrook(4000,ep)
 
+
+def DHC(Tb,Tw,P,D,G,q,fluid,count,ep,f,friction_model='dh_roughness', baseline_multiplier=1.0):
+    """DH equations as transcribed in Spencer's thesis Eqs.4–10.
+
+    Temperatures K, pressure Pa, diameter m, mass flux kg/(m2 s), q W/m2
+    into CO2 (negative for cooling). No inlet-node exception, no silent clamps.
+    `count` and initial `f` are retained for caller compatibility.
     """
-    if not 0 <= ep <= 1:
-        raise ValueError("Effective e/D must be between 0 and 1")
-    if ep > .05:
-        _warn_extrapolation()
-    # Clamp temperatures to reasonable bounds to prevent CoolProp errors
-    # For CO2: minimum temperature around 216 K (triple point)
-    T_min = 220.0  # Minimum temperature in K
-    T_max = 1000.0  # Maximum temperature in K
-
-    Tb = max(T_min, min(T_max, Tb))
-    Tw = max(T_min, min(T_max, Tw))
-
-    # Bulk Properties with error handling
-    try:
-        bulk = _props_DHC(fluid, Tb, P)
-    except Exception as e:
-        raise ValueError(f"Error calculating bulk properties at T={Tb:.2f}K, P={P:.2e}Pa: {e}")
-
-    #itteration on inside wall temperature
-    for l in range(100):
-        Tw_previous = Tw
-        try:
-            wall = _props_DHC(fluid, Tw, P)
-        except Exception as e:
-            # If wall temperature is invalid, clamp it and retry
-            Tw = max(T_min, min(T_max, Tw))
-            wall = _props_DHC(fluid, Tw, P)
-
-        Tf = (Tw + Tb) / 2
-        Tf = max(T_min, min(T_max, Tf))  # Clamp film temperature too
-        try:
-            film = _props_DHC(fluid, Tf, P)
-        except Exception as e:
-            raise ValueError(f"Error calculating film properties at T={Tf:.2f}K, P={P:.2e}Pa: {e}")
-
-
-        #Determination of CP_bar ensuring that the wall and bulk CP are not the same
-        if abs(Tb - Tw) < 1e-6:
-            Cpbar = bulk['Cp']
+    if not all(math.isfinite(v) for v in [Tb,Tw,P,D,G,q,ep]):
+        raise ValueError('DHC inputs must be finite')
+    if min(Tb,Tw,P,D,G)<=0 or not 0<=ep<=1:
+        raise ValueError('Positive temperatures, SI pressure, diameter and mass flux required; e/D in 0..1')
+    if not math.isfinite(baseline_multiplier) or baseline_multiplier<=0:
+        raise ValueError('Baseline correction multiplier must be positive and finite')
+    if q>0:raise ValueError("Dang-Hihara is a cooling correlation; heating needs a different model")
+    if ep>.05:_warn_extrapolation()
+    bulk=_props_DHC(fluid,Tb,P)
+    Reb=G*D/bulk['mu']
+    if Reb<3000:
+        raise ValueError(f'Dang-Hihara turbulent correlation cannot be used at bulk Re={Reb:.0f} (<3000)')
+    def evaluate(wall_T):
+        wall=_props_DHC(fluid,wall_T,P)
+        Tf=(Tb+wall_T)/2
+        film=_props_DHC(fluid,Tf,P)
+        cpbar=bulk['Cp'] if abs(Tb-wall_T)<1e-6 else (bulk['i']-wall['i'])/(Tb-wall_T)
+        if not math.isfinite(cpbar) or cpbar<=0:raise ValueError('Invalid integrated heat capacity')
+        mkb=bulk['mu']/bulk['k'];mkf=film['mu']/film['k']
+        if bulk['Cp']>=cpbar:
+            Pr=bulk['Cp']*mkb;branch='bulk_cp'
+        elif mkb>=mkf:
+            Pr=cpbar*mkb;branch='integrated_cp_bulk_transport'
         else:
-            Cpbar = (bulk['i'] - wall['i']) / (Tb - Tw)
-
-        Ref = G*D/film['mu']
-        Reb = G*D/bulk['mu']
-
-        # determining the ratios of bulk and film viscosity and thermal conductivity
-        MKb = bulk['mu']/bulk['k']
-        MKf = film['mu']/film['k']
-
-        #calculating the appropriate prandle number given by Dang & Hihara
-        Pr_c = bulk['Cp']*bulk['mu']/bulk['k']     # default (also covers non-finite comparisons)
-        if bulk['Cp'] >= Cpbar:
-            Pr_c = bulk['Cp']*bulk['mu']/bulk['k']
-        elif bulk['Cp'] < Cpbar and MKb >= MKf:
-            Pr_c = Cpbar*bulk['mu']/bulk['k']
-        elif bulk['Cp'] < Cpbar and MKb < MKf:
-            Pr_c = Cpbar*film['mu']/film['k']
-
-
-        #f = (1.82*math.log10(Ref)-1.64)**(-2)
-        #incorporation of the white-Colbrooke friction factor to simulate
-        #relative roughness on the CO2 side
-        for i in range(100):
-            previous_f = f
-            f = (-2*math.log10(ep/3.7+2.51/(Ref*math.sqrt(f))))**(-2)
-            if abs(f - previous_f) < 1e-12:
-                break
-
-        #determining the Nusselt #, heat transfer coefficent, and wall
-        #temperature based on applied heat flux
-        Nu = (f/8*(Reb-1000)*Pr_c)/(1.07+12.7*math.sqrt(f/8)*(Pr_c**(2/3)-1))
-        htc = Nu*film['k']/D
-        Tw = 0.5 * Tw_previous + 0.5 * (q/htc+Tb)
-
-        # Clamp wall temperature to prevent invalid CoolProp calls
-        Tw = max(T_min, min(T_max, Tw))
-        if abs(Tw - Tw_previous) < 1e-7:
-            break
-    else:
-        raise RuntimeError("Dang-Hihara wall iteration did not converge")
-
-    return pd.DataFrame([{'Tw':Tw,'Tf':Tf,'htc':htc,'Nu':Nu,'f':f}])
+            Pr=cpbar*mkf;branch='integrated_cp_film_transport'
+        Ref=G*D/film['mu'];ff=heat_friction(Ref,ep,friction_model)
+        Nu=(ff/8*(Reb-1000)*Pr)/(1.07+12.7*math.sqrt(ff/8)*(Pr**(2/3)-1))
+        Nu_before_correction=Nu
+        Nu=baseline_multiplier*Nu
+        h=Nu*film['k']/D
+        if not math.isfinite(h) or h<=0:raise ValueError('Nonpositive or nonfinite DH HTC')
+        return dict(Tw=wall_T,Tf=Tf,htc=h,Nu=Nu,f=ff,Re_bulk=Reb,Re_film=Ref,
+                    Cp_bulk=bulk['Cp'],Cp_integrated=cpbar,Pr_used=Pr,k_film=film['k'],
+                    Pr_branch=branch,heat_friction_model=friction_model,
+                    baseline_multiplier=baseline_multiplier,Nu_before_baseline_correction=Nu_before_correction)
+    for iterations in range(150):
+        values=evaluate(Tw)
+        next_T=Tb+q/values['htc']
+        if not math.isfinite(next_T) or next_T<=0:raise ValueError('Unphysical wall temperature from q/h')
+        if abs(next_T-Tw)<1e-7:
+            # Return all properties evaluated at the actual returned wall temperature.
+            values=evaluate(next_T)
+            values['wall_iterations']=iterations+1
+            values['wall_flux_residual_W_m2']=values['htc']*(next_T-Tb)-q
+            if abs(values['wall_flux_residual_W_m2'])<=max(1e-4,abs(q)*1e-7):
+                return pd.DataFrame([values])
+        Tw=.5*Tw+.5*next_T
+    raise RuntimeError('Dang-Hihara wall iteration did not converge')
 
 
 @lru_cache(maxsize=64)
@@ -211,30 +199,22 @@ def Gniel(Tb,Tw,P,a,G,dh,L,q,fluid):
     f : Friction factor in the annulus
 
     """
-    # Clamp Tb, Tw to valid range for REFPROP (avoid out-of-range CoolProp errors)
-    T_lo, T_hi = 274.0, 2000.0  # K; water valid range
-    Tb = max(T_lo, min(T_hi, float(Tb)))
-    Tw = max(T_lo, min(T_hi, float(Tw)))
-    # Convert pressure: check if in atm (small values) or already in Pa
-    # If P < 100, assume it's in atm and convert to Pa
-    if P < 100:
-        P_Pa = P * 101325  # Convert atm to Pa
-    else:
-        P_Pa = P  # Already in Pa
-
+    if not all(math.isfinite(v) for v in [Tb,Tw,P,a,G,dh,L,q]) or min(Tb,Tw,P,G,dh,L)<=0:
+        raise ValueError('Gniel inputs must be finite, positive and in SI units (P in Pa)')
+    if not 0<a<1:raise ValueError('Annulus diameter ratio must be in 0..1')
+    P_Pa=P
     AS = _state(fluid)
     # Bulk properties do not change inside the loop (Tb fixed)
     AS.update(CP.PT_INPUTS, P_Pa, Tb)
     Bulk = {'rho': AS.rhomass(), 'mu': AS.viscosity(), 'K': AS.conductivity(), 'Pr': AS.Prandtl()}
 
-    for i in range(0,3):
+    for i in range(100):
+        previous_Tw=Tw
         Tf = (Tb+Tw)/2
-        Tf = max(T_lo, min(T_hi, Tf))
+
 
         AS.update(CP.PT_INPUTS, P_Pa, Tw)
-        wall = {'K': AS.conductivity(), 'Pr': AS.Prandtl()}
-        AS.update(CP.PT_INPUTS, P_Pa, Tf)
-        film = {'K': AS.conductivity()}
+        wall = {'Pr': AS.Prandtl()}
 
         Re = G*dh/Bulk['mu']
 
@@ -252,7 +232,12 @@ def Gniel(Tb,Tw,P,a,G,dh,L,q,fluid):
             Nu = (1-weight)*Nu_lam + weight*Nu
             fann = (1-weight)*poiseuille/Re + weight*fann
         htc = Nu*Bulk['K']/dh
-        Tw = q/htc+Tb
-        Tw = max(T_lo, min(T_hi, Tw))
+        next_Tw=q/htc+Tb
+        if not math.isfinite(next_Tw) or next_Tw<=0:raise ValueError("Unphysical water wall temperature")
+        if abs(next_Tw-Tw)<1e-7:
+            Tw=next_Tw;Tf=(Tb+Tw)/2;break
+        Tw=.5*Tw+.5*next_Tw
+    else:
+        raise RuntimeError("Water correlation wall iteration did not converge")
 
     return pd.DataFrame([{'Tw':Tw,'Tf':Tf,'htc':htc,'Nu':Nu,'f':fann}])

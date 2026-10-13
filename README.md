@@ -305,3 +305,88 @@ To reproduce the water-bypassed diagnostic:
 ```bash
 python smooth_nominal_flux_check.py --segments 100
 ```
+
+## Revised correlation and roughness implementation
+
+The current default is `dh_roughness`: the smooth Dang–Hihara friction expression
+as transcribed in Spencer's thesis, multiplied by the **relative** Colebrook
+rough/smooth friction ratio. This guarantees the stated DH smooth limit. The
+roughness extension remains empirical and is not a published validated DH
+correlation for dimpled tubes.
+
+```bash
+# Original smooth equation, no roughness:
+python CounterHX_full.py --roughness 0 --co2-friction-model dang_hihara
+
+# Local roughness enhancement on the DH baseline (current default):
+python CounterHX_full.py --roughness 0.01 --co2-friction-model dh_roughness
+
+# Earlier direct-Colebrook thermal formulation:
+python CounterHX_full.py --roughness 0.01 --co2-friction-model colebrook
+```
+
+Choose Constant, Step, Linear, or Sine in the input CSV. A single Step is now
+constant at the requested maximum; multistep boundaries are defined in physical
+x. Programmatic custom e/D arrays require one value per axial node. Invalid
+roughness is rejected rather than ignored. The output records the selected
+friction model and local property/Prandtl diagnostics. Pressure uses separately
+reported bulk-Re hydraulic friction, not the film-Re heat-transfer factor.
+
+Historical result tables above used the earlier formulation. Their numerical
+values are archived comparisons, not rerun results from the current model.
+See `validation/correlation_audit.md` for the changes, equation sources, checks,
+and remaining applicability limitations. The friction correction is small in
+the tested cases; it does not remove the observed smooth-tube HTC discrepancy.
+
+## Optional smooth-trained baseline correction
+
+An explicitly empirical multiplier can be applied to local Dang–Hihara Nu
+before the wall-temperature iteration. It defaults to **1**, is separate from
+e/D, and does not multiply hydraulic friction. The fitted model uses temperature
+relative to the pseudocritical point, mass flux and nominal flux group. Nominal
+flux is a predictor; the solver still computes its own heat duty.
+
+The 38 smooth cases were fitted at e/D=0 with the same assumed water inlet
+20.7 °C and flow 0.087 kg/s. Leave-one-case-out regression then predicted the
+factor for each excluded case and ran the coupled solver: mean absolute HTC
+error fell from **46.73% to 14.22%**, with **9/38 within 5%** and worst error
+**43.46%**. These are 20-segment screening results. This is conditional empirical
+calibration, not a validated correction to the published correlation. Cases
+from the same campaign are related; leave-one-case-out performance does not
+establish generalization to a new apparatus or campaign. The older nominal-flux
+postprocessing diagnostic is not this coupled validation.
+
+```bash
+# Reproduce calibration and held-out solver tests (takes several minutes):
+python train_smooth_baseline.py --workers 3 --segments 20
+
+# Opt in for dimpled fitting with the independently smooth-trained correction:
+python calibrate_dimpled.py --smooth-baseline-model results/smooth_baseline/model.json --allow-baseline-extrapolation --ep-max 0.05 --workers 3 --segments 20 --output Dimpled-transfer.xlsx
+```
+
+The optional model requires HEOS and the training geometry/water assumptions.
+It rejects points outside the recorded temperature, mass-flux, nominal-flux or
+pressure ranges unless `--allow-baseline-extrapolation` is supplied; such use is
+labeled in output. A range check is not evidence of a validated domain. Download
+`results/smooth_baseline/heldout_predictions.xlsx` for all smooth targets and
+held-out numerical predictions. Training factors alone are fitted values, not
+held-out predictions. Experimental uncertainty is unchanged.
+
+With this smooth-trained model held fixed, **24/40 dimpled cases** can match HTC
+using e/D between 0 and 0.05. Thirteen targets are below the corrected smooth
+prediction and three are above the tested roughness cap; those 16 remain
+unfitted. This is individual roughness calibration, not held-out dimple
+validation or confirmation that these e/D values represent physical dimples.
+Heat-flux agreement remains a separate requirement.
+
+For your existing Windows environment, run this from the updated repository
+folder to fit the May27_10 row in `Test.csv` with the optional correction:
+
+```powershell
+$env:HX_PROPERTY_BACKEND = "HEOS"
+& "C:\Users\quint\anaconda3\envs\PhD_research\python.exe" CounterHX_full.py --fit --ep-max 0.05 --smooth-baseline-model results/smooth_baseline/model.json
+```
+
+Download the complete updated repository so the helper modules and model JSON
+are available together. Omitting `--smooth-baseline-model` keeps the baseline
+uncorrected; HEOS model coefficients are not interchangeable with REFPROP.

@@ -10,7 +10,7 @@ def run_case(row, roughness=None, segments=100, verbose=False, target_bulk=None)
     def optional(name, default=None):
         value = row.get(name, default)
         return default if pd.isna(value) else value
-    return CO2_counter(
+    profile=CO2_counter(
         row['m_CO2 (kg/s)'], row['T_CO2 (C)'], row['P (Mpa)'],
         row['m_H2O (kg/s)'], row['T_H2O (C)'], row['P (atm)'],
         row['D (mm)'], row['wall thickness (mm)'], row['water gap (mm)'],
@@ -23,7 +23,13 @@ def run_case(row, roughness=None, segments=100, verbose=False, target_bulk=None)
         Q_leak_intercept=optional('Q_leak_intercept', 0.),
         segments=segments, verbose=verbose, max_iter=200,
         water_htc_multiplier=optional('water_htc_multiplier', 1.0),
-        relax=optional('solver_relax', .7), target_mean_CO2_C=target_bulk)
+        relax=optional('solver_relax', .7), target_mean_CO2_C=target_bulk,
+        co2_friction_model=optional('CO2_heat_friction_model','dh_roughness'),
+        co2_baseline_multiplier=optional('CO2_baseline_correction_multiplier',1.0))
+
+    for key in ['CO2_baseline_model','CO2_baseline_model_extrapolated']:
+        if key in row and pd.notna(row[key]):profile.attrs['summary'][key]=row[key]
+    return profile
 
 
 
@@ -74,6 +80,10 @@ def main():
     inlet_options.add_argument('--fixed-inlet', dest='match_bulk', action='store_false',
                                help='Use the CSV inlet as a fixed measured condition instead of inferring it')
     parser.add_argument('--bulk-temp', type=float, help='Single-case measured endpoint-mean CO2 temperature (C)')
+    parser.add_argument('--smooth-baseline-model', help='Opt-in empirical smooth baseline model JSON; requires target mean and nominal flux')
+    parser.add_argument('--allow-baseline-extrapolation', action='store_true')
+    parser.add_argument('--co2-friction-model', choices=['dh_roughness','dang_hihara','colebrook'],
+                        help='DH baseline with relative roughness enhancement (default), original smooth DH, or previous direct Colebrook replacement')
     parser.add_argument('--water-htc-multiplier', type=float, help='Diagnostic water HTC factor; not a validated correlation correction')
     parser.add_argument('--roughness', type=float, help='Override CSV effective e/D')
     parser.add_argument('--reference', help='Reference CSV keyed by Case, e.g. experimental_targets.csv')
@@ -83,12 +93,16 @@ def main():
     parser.add_argument('--ep-min', type=float, default=0.)
     parser.add_argument('--ep-max', type=float, default=.05)
     args = parser.parse_args()
+    if args.fit and args.co2_friction_model=='dang_hihara':
+        parser.error('Original Dang-Hihara is smooth-only; choose dh_roughness to fit roughness')
     if args.fit and args.roughness is not None:
         parser.error('--fit and --roughness cannot be combined')
     df = pd.read_csv(args.input, encoding='utf-8-sig')
     df.columns = df.columns.str.replace('\xa0',' ').str.strip()
     if args.target_htc is not None and (not args.fit or len(df) != 1):
         parser.error('--target-htc requires --fit and a single-case CSV')
+    if args.co2_friction_model is not None:
+        df['CO2_heat_friction_model']=args.co2_friction_model
     if args.water_htc_multiplier is not None:
         df['water_htc_multiplier'] = args.water_htc_multiplier
     if args.reference:
@@ -104,6 +118,11 @@ def main():
             df['target_htc_W_m2K'] = df['experimental_target_htc_W_m2K']
     if args.bulk_temp is not None and (not args.match_bulk or len(df) != 1):
         parser.error('--bulk-temp requires --match-bulk and a single-case CSV')
+    if args.bulk_temp is not None:
+        df['target_mean_CO2_C']=args.bulk_temp
+    if args.smooth_baseline_model:
+        from smooth_baseline import apply_model
+        df=apply_model(df,args.smooth_baseline_model,args.allow_baseline_extrapolation)
     summaries=[]
     # Finish calculations before opening an output workbook, so a failed fit does not overwrite it.
     results=[]
@@ -126,7 +145,7 @@ def main():
                     else match_bulk_case(row,ep,target_bulk,args.segments))
         summary={'Case':row['Case'],'effective_e_over_D':ep,
                  'roughness_extrapolated':bool(ep > .05),**result.attrs['summary']}
-        for key in ['experimental_target_htc_W_m2K', 'experimental_mean_CO2_C', 'experimental_pressure_drop_psi']:
+        for key in ['CO2_baseline_model','CO2_baseline_model_extrapolated','experimental_target_htc_W_m2K', 'experimental_mean_CO2_C', 'experimental_pressure_drop_psi']:
             if key in row and pd.notna(row[key]):
                 summary[key] = row[key]
         if target is not None:
