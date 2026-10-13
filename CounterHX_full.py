@@ -6,7 +6,7 @@ from scipy.optimize import brentq
 from Counterflow_HX_4 import CO2_counter
 
 
-def run_case(row, roughness=None, segments=100, verbose=False):
+def run_case(row, roughness=None, segments=100, verbose=False, target_bulk=None):
     def optional(name, default=None):
         value = row.get(name, default)
         return default if pd.isna(value) else value
@@ -21,7 +21,9 @@ def run_case(row, roughness=None, segments=100, verbose=False):
         U_amb=optional('U_amb', 0.), d_outer_mm=optional('d_outer_mm', 0.),
         Q_leak_slope=optional('Q_leak_slope'),
         Q_leak_intercept=optional('Q_leak_intercept', 0.),
-        segments=segments, verbose=verbose, max_iter=200)
+        segments=segments, verbose=verbose, max_iter=200,
+        water_htc_multiplier=optional('water_htc_multiplier', 1.0),
+        relax=optional('solver_relax', .7), target_mean_CO2_C=target_bulk)
 
 
 
@@ -33,32 +35,8 @@ def match_bulk_case(row, roughness, target_bulk, segments=100):
     """
     if not target_bulk > row['T_H2O (C)']:
         raise ValueError('Target bulk temperature must exceed water inlet temperature')
-    cache = {}
-    def residual(inlet):
-        trial = row.copy()
-        trial['T_CO2 (C)'] = inlet
-        profile = run_case(trial, roughness, segments)
-        cache[inlet] = profile
-        return profile.attrs['summary']['CO2_mean_endpoint_C'] - target_bulk
-    lower = float(target_bulk)
-    upper = max(lower + 1., float(row['T_CO2 (C)']))
-    low = residual(lower)
-    high = residual(upper)
-    while low*high > 0 and upper < lower+20:
-        upper = min(lower+20, upper+2.)
-        high = residual(upper)
-    if low*high > 0:
-        raise ValueError('Could not bracket an inlet for the target bulk temperature')
-    inlet = brentq(residual, lower, upper, xtol=1e-5)
-    if inlet not in cache:
-        residual(inlet)
-    profile = cache[inlet]
-    profile.attrs['summary'].update(inferred_CO2_inlet_C=inlet,
-                                    target_bulk_C=target_bulk,
-                                    CO2_inlet_is_inferred=True)
-    if abs(profile.attrs['summary']['CO2_mean_endpoint_C']-target_bulk)>1e-4:
-        raise RuntimeError('Inferred inlet failed bulk-temperature acceptance tolerance')
-    return profile
+    return run_case(row, roughness, segments, target_bulk=float(target_bulk))
+
 
 def fit_case(row, target, bounds=(0., .05), segments=100, target_bulk=None, allow_extrapolation=False):
     """Bracket first; refuse out-of-range targets. Never fit unconverged solutions."""
@@ -96,6 +74,7 @@ def main():
     inlet_options.add_argument('--fixed-inlet', dest='match_bulk', action='store_false',
                                help='Use the CSV inlet as a fixed measured condition instead of inferring it')
     parser.add_argument('--bulk-temp', type=float, help='Single-case measured endpoint-mean CO2 temperature (C)')
+    parser.add_argument('--water-htc-multiplier', type=float, help='Diagnostic water HTC factor; not a validated correlation correction')
     parser.add_argument('--roughness', type=float, help='Override CSV effective e/D')
     parser.add_argument('--reference', help='Reference CSV keyed by Case, e.g. experimental_targets.csv')
     parser.add_argument('--fit', action='store_true', help='Fit each target_htc_W_m2K in CSV')
@@ -110,6 +89,8 @@ def main():
     df.columns = df.columns.str.replace('\xa0',' ').str.strip()
     if args.target_htc is not None and (not args.fit or len(df) != 1):
         parser.error('--target-htc requires --fit and a single-case CSV')
+    if args.water_htc_multiplier is not None:
+        df['water_htc_multiplier'] = args.water_htc_multiplier
     if args.reference:
         reference = pd.read_csv(args.reference)
         if reference.Case.duplicated().any():

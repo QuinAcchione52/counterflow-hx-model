@@ -74,7 +74,9 @@ python CounterHX_full.py --fit --match-bulk --ep-max 1 --allow-extrapolation
 `--match-bulk` solves for CO₂ inlet temperature separately at every trial e/D,
 so the endpoint mean stays at the measured bulk temperature throughout fitting.
 Outputs label that inlet `inferred_CO2_inlet_C` and `CO2_inlet_is_inferred`.
-The given inlet remains an initial guess; the input CSV is not rewritten.
+The CSV inlet is used as a fixed boundary with `--fixed-inlet`. In inverse
+mode the solver uses a numerical initial guess based on the target mean; the
+input CSV is not rewritten.
 The tool does not add an independent HTC enhancement multiplier.
 
 ## May27_10 diagnosis
@@ -156,7 +158,7 @@ be interchanged. All numerical results in this diagnosis use HEOS.
 Fine-grid confirmation at **100 segments** gives HTC **2642.176 W/(m² K)**
 (error **0.00665%**) at the same fitted e/D, with mean bulk temperature
 **35.2299995 °C** and inferred inlet **35.4620801 °C**. Energy residuals are
-below 1e-6 W. See `validation/May27_10_HEOS.csv` for the summary. Eight automated
+below 1e-6 W. See `validation/May27_10_HEOS.csv` for the summary. Nine automated
 tests cover the laminar limiting solution, experimental HTC definition, inlet
 wall correlation, counterflow boundaries/energy conservation, fitting behavior,
 and inlet inference. A real bounded fit to 1000 W/(m² K) at 40 segments also
@@ -169,3 +171,88 @@ by default. Alternatively use `--roughness 0.01` to override e/D without
 rewriting the CSV. `--fixed-inlet` disables this inverse-temperature step for
 cases where the inlet is a measured condition. Automatic fitting still requires
 `--fit`; large extrapolated fitting bounds require `--allow-extrapolation`.
+
+## Dimpled cases, one at a time or as a batch
+
+`Dimpled_cases.csv` contains all 40 dimpled runs from thesis Table 13, with each
+case's published CO2 mass flow, pressure, mean bulk temperature, and HTC target.
+The mass flow and pressure retain the table's rounding. Water inlet **20.7 °C**,
+water flow **0.087 kg/s**, ambient **22 °C**, geometry, and the existing leakage
+fit are shared assumptions inherited from the supplied May27_10 input. They
+are not per-case measurements from the thesis. The nominal heat-flux group is
+recorded separately from model-predicted flux.
+
+```bash
+# First published dimpled case; fit only within the conventional test bounds:
+python calibrate_dimpled.py --case May19_3 --output May19_3-fit.xlsx
+
+# Explicitly allow an effective calibration beyond those bounds:
+python calibrate_dimpled.py --case May19_3 --ep-max 1 --allow-extrapolation --output May19_3-fit.xlsx
+
+# All 40, with independent cases in separate processes:
+python calibrate_dimpled.py --workers 3 --ep-max 1 --allow-extrapolation
+```
+
+The runner checks the zero-roughness and e/D=0.05 predictions before trying an
+extended bracket. A root that matches HTC within 0.1% is labeled either
+`fit_within_0_to_005` or `extrapolated_fit`; the first label describes the tested
+bounds, not proof of physical roughness. Unbracketed targets and solver errors
+are reported separately and do not abort the other cases. The output contains
+a Summary, Inputs_assumptions, and successfully fitted profiles; a partial CSV
+is refreshed as cases finish. Default 20 segments is a screening grid; confirm
+important cases at 100 segments before interpreting differences between cases.
+
+The unknown CO2 inlet is now solved jointly with the water outlet inside each
+frozen-U thermal solve. This avoids repeatedly converging the whole model for
+trial inlet temperatures. It preserves the same energy balance and endpoint
+mean constraint. It has been checked against the previous nested solver.
+
+## Water-side sensitivity
+
+Water conditions can affect the inferred CO2 inlet, heat duty, wall temperature,
+and therefore the HTC correlation. They must not be tuned freely alongside e/D
+and then interpreted as independently identified physical parameters.
+
+For actual temperature/flow sensitivity, edit `T_H2O (C)` or `m_H2O (kg/s)` in
+a copy of the input CSV. An optional `water_htc_multiplier` column or
+`--water-htc-multiplier` flag is available for **diagnostic sensitivity only**;
+its default is 1.0 and it does not establish a new validated water correlation.
+It scales water HTC and adjusts its correlation wall-flux iteration consistently.
+It never directly scales CO2 HTC. No water multiplier is fitted automatically.
+
+```bash
+python CounterHX_full.py --roughness 0.05 --water-htc-multiplier 2 --output Water-sensitivity.xlsx
+```
+
+At the May27_10 target mean of 35.23 °C and e/D=0.05, the tested water changes
+have not raised the predicted CO2 HTC to 2642 W/(m² K). The baseline gives about
+1291, a 2x water HTC gives 1207, and a 4x water HTC gives 1087. Increasing water
+HTC increases duty but also changes the CO2 wall/bulk properties; it is not a
+direct way to increase the CO2-side correlation coefficient. The default water
+model and conditions therefore remain unchanged for the dimpled-case batch.
+A physically supported entrance/mixed-convection water model remains a separate
+model-development question; arbitrary multipliers are not a correction for it.
+
+
+### Completed dimpled screening run
+
+All 40 cases fitted their published HTC and bulk-temperature targets with the
+shared assumptions above. Four point fits lie within 0..0.05: May24_4
+(0.0197812), May27_4 (0.0172585), May24_2
+(0.04078125), and May27_2
+(0.02593258). The other 36 require extrapolated effective e/D.
+The overall screening range is about 0.01726..0.64462; this variation is in an
+effective calibration parameter for the same physical tube, not changing
+measured surface roughness. See `validation/Dimpled_cases_HEOS_screening.csv`.
+
+The first listed dimpled case, May19_3, was refitted at 100 segments:
+e/D=0.28503290, HTC=1862.0000 W/(m² K), mean CO2 temperature=35.75 °C,
+inferred inlet=36.269523 °C. The e/D differs by 0.0733% from the 20-segment fit.
+May24_4 was also checked at 100 segments: e/D=0.01977386, HTC≈332 W/(m² K);
+the e/D difference is -0.0372%. These are representative fine-grid checks,
+not a claim that every case has been run at 100 segments.
+
+The summary records the reported HTC uncertainty band separately from the
+point-fit result. It is not treated as an independently established confidence
+interval, nor are the point targets changed to obtain smaller roughness values.
+Water-side sensitivity results are in `validation/May27_10_water_sensitivity_HEOS.csv`.

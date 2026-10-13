@@ -54,19 +54,21 @@ from Correlations import DHC
 from Correlations import Gniel
 import math
 import os
-from scipy.optimize import brentq
+from scipy.optimize import brentq, root
 
 
 #%% function call
 def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, Kp, ep, pro, p, Constant, q_CO2_i,
                 whole_section=False, T_ambient=25., U_amb=0., d_outer_mm=0., Q_leak_slope=None, Q_leak_intercept=0.,
-                max_iter=100, tol_T=1e-4, tol_Q=1e-6, relax=0.7, verbose=True, segments=None):
+                max_iter=100, tol_T=1e-4, tol_Q=1e-6, relax=0.7, verbose=True, segments=None, water_htc_multiplier=1.0, target_mean_CO2_C=None):
     """
     New optional arguments (defaults keep CounterHX_full.py working unchanged):
         max_iter : maximum number of outer (correlation) iterations
         tol_T    : convergence tolerance on max change in bulk temperature between iterations (K)
         tol_Q    : convergence tolerance on relative change in total Q between iterations (-)
         relax    : under-relaxation on U between iterations (1 = none; lower if it oscillates)
+        target_mean_CO2_C : optional measured endpoint mean; infer CO2 inlet jointly
+        water_htc_multiplier : diagnostic sensitivity only; default 1 preserves the model
     """
 
     #Fluid Phases
@@ -81,12 +83,19 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
         7: "critical"
     }
 
+    if not np.isfinite(water_htc_multiplier) or water_htc_multiplier <= 0:
+        raise ValueError("water_htc_multiplier must be positive and finite")
     if whole_section:
         raise ValueError("whole_section is an unvalidated placeholder; use the segmented solver")
     if min(m_dot_CO2, m_dot_H2O, D, wt, wg, L, Kp) <= 0:
         raise ValueError("Flows and geometry must be positive; D is the inner diameter in mm")
     if segments is not None and (segments < 1 or int(segments) != segments):
         raise ValueError("segments must be a positive integer")
+
+    if target_mean_CO2_C is not None:
+        if Constant or not np.isfinite(target_mean_CO2_C) or target_mean_CO2_C <= T_H2O:
+            raise ValueError("Inverse bulk target must exceed water inlet and requires the coupled thermal solver")
+        T_CO2 = float(target_mean_CO2_C) + .3  # initial guess only, not an experimental inlet
 
     # inputs Pipe Geometry
     d_CO2 = D   # Inner diameter (mm) of CO2 pipe [e.g. 13.3858]
@@ -250,6 +259,8 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
 
     Q_seed = np.zeros(n)            # last-march segment Q, used to start each local solve
 
+    trial_CO2_out = np.nan
+
     def march(h_w_out, store_props):
         """
         Forward march in +x for a trial water OUTLET enthalpy at x = 0 (frozen U profile).
@@ -260,6 +271,8 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
                           ->  h_w[k+1] = h_w[k] + (Q_k + Q_leak_k)/mdot_2
         Returns residual h_w[n-1] - h_w_in (zero when the water inlet condition is met).
         """
+        nonlocal trial_CO2_out
+        trial_CO2_out = np.nan
         hc = CO2['ib'][0]
         hw = h_w_out
         Tc = CO2['Tb'][0]
@@ -305,6 +318,7 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
                 store(H2O, k + 1, ASH2O, 'b')
             Q_seed[k] = Qk
             hc, hw, Tc, Tw = hc1, hw1, Tc1, Tw1
+        trial_CO2_out = Tc
         return hw - h_H2O_in
 
     #% Outer Picard loop: correlations <-> counterflow thermal solve
@@ -338,8 +352,8 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
             # length-averaged correction from the flow inlet. Passing dx (old code) inflated the
             # water htc ~4x at dx = 10 mm and made it grid-dependent.
             Gne = Gniel(H2O['Tb'][k], H2O['Tw'][k], H2O['P'][k], a, G2, da, L,
-                        -Qn[k] / As_H2O, F2)
-            Nu_H2O[k], htc_H2O[k] = Gne.Nu[0], Gne.htc[0]
+                        -Qn[k] / As_H2O / water_htc_multiplier, F2)
+            Nu_H2O[k], htc_H2O[k] = water_htc_multiplier*Gne.Nu[0], water_htc_multiplier*Gne.htc[0]
             f_H2O[k], Tf_H2O[k] = Gne.f[0], Gne.Tf[0]
             # Outer wall = inner wall minus conduction drop across the tube wall.
             # Heat leaving CO2 through the wall = -Qn  ->  Tw_outer = Tw_inner + Qn*R2
@@ -374,6 +388,33 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
             for k in range(nseg):
                 lmtd[k] = lmtd_fn(CO2['Tb'][k] - H2O['Tb'][k], CO2['Tb'][k + 1] - H2O['Tb'][k + 1])
                 dT[k] = CO2['Tb'][k] - H2O['Tb'][k]
+        elif target_mean_CO2_C is not None:
+            # Solve the two inlet/outlet constraints together for frozen U:
+            # unknown CO2 inlet, unknown water outlet; mean CO2 and water inlet fixed.
+            target_K = float(target_mean_CO2_C)+273.15
+            def inverse_residual(temperatures):
+                hot_in, water_out = map(float, temperatures)
+                if not (target_K-10 < hot_in < target_K+30 and 274. < water_out < 449.):
+                    return [1e3+abs(hot_in-target_K), 1e3+abs(water_out-T2)]
+                ASCO2.update(CP.PT_INPUTS, P1, hot_in)
+                store(CO2, 0, ASCO2, 'b')
+                ASH2O.update(CP.PT_INPUTS, P2, water_out)
+                water_residual = march(ASH2O.hmass(), False)
+                if not np.isfinite(trial_CO2_out):
+                    raise RuntimeError("Inverse trial march did not complete")
+                return [water_residual/4200., (hot_in+trial_CO2_out)/2-target_K]
+            guess=[T1, Tw_out_prev if Tw_out_prev is not None else T2+.2]
+            solution=root(inverse_residual,guess,tol=1e-9)
+            final_residual=np.asarray(inverse_residual(solution.x))
+            if not np.all(np.isfinite(final_residual)) or np.max(np.abs(final_residual))>1e-6:
+                raise RuntimeError(f"Joint inlet/bulk solve did not converge: {final_residual}")
+            T1,Tw_out_prev=map(float,solution.x)
+            ASCO2.update(CP.PT_INPUTS,P1,T1)
+            store(CO2,0,ASCO2,'b')
+            ASH2O.update(CP.PT_INPUTS,P2,Tw_out_prev)
+            inlet_residual=march(ASH2O.hmass(),True)
+            if abs(inlet_residual)>1e-3:
+                raise RuntimeError("Inverse solution missed water inlet boundary")
         else:
             # Shooting on the water outlet temperature (x = 0) so the forward march hits the
             # known water inlet temperature at x = L.
@@ -556,9 +597,17 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
     plot.attrs['summary'].update({
         'property_backend': os.environ.get('HX_PROPERTY_BACKEND', 'HEOS'),
         'iterations': n_sweeps, 'converged': converged,
+        'water_htc_multiplier': float(water_htc_multiplier),
+        'water_htc_mean_W_m2K': float(np.mean(htc_H2O)),
         'CO2_energy_residual_W': float(duty_CO2 + total_Q),
         'water_energy_residual_W': float(duty_H2O + total_Q + total_Q_leak),
     })
+    if target_mean_CO2_C is not None:
+        if abs(plot.attrs['summary']['CO2_mean_endpoint_C']-target_mean_CO2_C)>1e-4:
+            raise RuntimeError("Inverse solution missed mean bulk temperature")
+        plot.attrs['summary'].update(inferred_CO2_inlet_C=T1-273.15,
+                                     target_bulk_C=float(target_mean_CO2_C),
+                                     CO2_inlet_is_inferred=True)
     if verbose:
         print(f"Spencer-definition HTC: {plot.attrs['summary']['htc_spencer_W_m2K']:.1f} W/(m²·K)")
     #%% return results

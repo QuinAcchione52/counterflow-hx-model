@@ -71,21 +71,33 @@ def test_fit_recovers_known_roughness(monkeypatch,solved):
     assert ep==pytest.approx(.02)
 
 
-def test_inlet_inverse_matches_bulk_and_labels_assumption(monkeypatch,solved):
+def test_inlet_inverse_matches_bulk_and_labels_assumption(solved):
     from CounterHX_full import match_bulk_case
     row,p=solved
-    def fake(row,ep,segments):
-        result=p.copy()
-        result.attrs={'summary':{'CO2_mean_endpoint_C':row['T_CO2 (C)']-.5}}
-        return result
-    monkeypatch.setattr('CounterHX_full.run_case',fake)
     result=match_bulk_case(row,.001,35.23,segments=10)
-    assert result.attrs['summary']['inferred_CO2_inlet_C']==pytest.approx(35.73)
-    assert result.attrs['summary']['CO2_mean_endpoint_C']==pytest.approx(35.23)
-    assert result.attrs['summary']['CO2_inlet_is_inferred']
+    summary=result.attrs['summary']
+    assert summary['inferred_CO2_inlet_C']==pytest.approx(35.44215,abs=1e-3)
+    assert summary['CO2_mean_endpoint_C']==pytest.approx(35.23,abs=1e-5)
+    assert summary['CO2_inlet_is_inferred']
+    assert result.H2Ob.iloc[-1]==pytest.approx(293.85,abs=2e-6)
+    assert abs(summary['CO2_energy_residual_W'])<1e-5
+    assert abs(summary['water_energy_residual_W'])<1e-5
 
 
 def test_large_roughness_fit_requires_explicit_extrapolation(solved):
     row,p=solved
     with pytest.raises(ValueError,match='allow_extrapolation'):
         fit_case(row,2642,bounds=(0,1),segments=10)
+
+
+def test_water_sensitivity_factor_changes_water_side_without_scaling_co2(solved):
+    row,baseline=solved
+    trial=row.copy(); trial['water_htc_multiplier']=2.
+    changed=run_case(trial,.001,10)
+    # Water inlet temperature is fixed, so baseline Nu and conductivity at that
+    # boundary are identical. The multiplier must act on that water HTC only.
+    assert changed.htc_H2O.iloc[-1]==pytest.approx(2*baseline.htc_H2O.iloc[-1],rel=1e-6)
+    assert -changed.Q.sum()>-baseline.Q.sum()
+    assert changed.htc_CO2.iloc[0] != pytest.approx(2*baseline.htc_CO2.iloc[0],rel=.01)
+    assert abs(changed.attrs['summary']['CO2_energy_residual_W'])<1e-5
+    assert abs(changed.attrs['summary']['water_energy_residual_W'])<1e-5
