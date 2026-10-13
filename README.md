@@ -154,8 +154,61 @@ be interchanged. All numerical results in this diagnosis use HEOS.
 Fine-grid confirmation at **100 segments** gives HTC **2642.176 W/(m² K)**
 (error **0.00665%**) at the same fitted e/D, with mean bulk temperature
 **35.2299995 °C** and inferred inlet **35.4620801 °C**. Energy residuals are
-below 1e-6 W. See `validation/May27_10_HEOS.csv` for the summary. Eight automated
+below 1e-6 W. See `validation/May27_10_HEOS.csv` for the summary. Ten automated
 tests cover the laminar limiting solution, experimental HTC definition, inlet
 wall correlation, counterflow boundaries/energy conservation, fitting behavior,
-and inlet inference. A real bounded fit to 1000 W/(m² K) at 40 segments also
+inlet inference, and independent hydraulic calibration. A real bounded fit to 1000 W/(m² K) at 40 segments also
 returned e/D ≈ 0.00883879 and reproduced the target.
+
+## Separate pressure-drop fit
+
+```bash
+python pressure_calibration.py --roughness 0.3636871236009118 --segments 100
+```
+
+This holds the thermal effective e/D fixed, infers the inlet to match the
+reference mean bulk temperature, and then independently fits viscous pressure
+loss to `pressure_drop_psi` in `experimental_targets.csv`. The signed
+acceleration contribution is not multiplied. It outputs `Pressure-fit.xlsx`
+and `Pressure-fit.summary.csv`; `--target-pressure-psi` can override a single
+case's target. The calibration is a one-way postprocessing fit on the unchanged
+thermal profile, not a new coupled solution or an experimentally established
+friction law. Absolute-pressure feedback is omitted as in the original solver;
+416.44 Pa is only about 0.00515% of the 8.094 MPa operating pressure here.
+
+For May27_10 on the HTC-calibrated 100-segment profile:
+
+| Quantity | Value |
+|---|---:|
+| Unscaled viscous drop | 0.00272173 psi |
+| Acceleration contribution (cooling pressure recovery) | -0.0000342463 psi |
+| Baseline total pressure drop | 0.00268748 psi |
+| Experimental total pressure drop | 0.0604 psi |
+| Fitted viscous multiplier | 22.20435 |
+| Calibrated total pressure drop | 0.0604 psi |
+| Unchanged HTC | 2642.176 W/(m² K) |
+
+The script also independently inverts Colebrook for a **pressure-only**
+equivalent e/D on the frozen thermal profile. Matching 0.0604 psi requires
+**e/D ≈ 2.26324**, corresponding to about **30.30 mm** of equivalent roughness
+in a 13.39 mm bore. This is geometrically impossible as wall roughness. The
+extended 0..3 inversion is only a diagnostic to expose that contradiction;
+it is never fed back into the Dang–Hihara HTC correlation. The multiplier
+calibration and pressure-only e/D inversion are alternative ways of fitting
+the same pressure target; do not apply both simultaneously.
+
+A separate coupled thermal run with e/D=1 and the mean bulk matched predicts
+only 0.0085014 psi and HTC about 4897 W/(m² K). Thus one common roughness
+parameter cannot reproduce the reported HTC and pressure for this model and
+these supplied conditions. The pressure fit has separate hydraulic and thermal
+parameters and cannot be called a validated model simply because both targets
+can be forced to match.
+
+The thesis says the differential transducer measures the test-section drop,
+but the actual tap-to-tap wetted path and all restrictions need confirmation.
+Check reducers, connection tubes, fittings, valves, and zero/calibration records
+before interpreting the missing loss. A Darcy/Fanning convention difference
+(factor four) cannot explain the remaining factor 22 on this HTC-fitted profile.
+The thesis also reports less than 4% pressure difference between smooth and
+dimpled tubes, so assigning the entire measured loss to dimple roughness is
+not supported by that observation. See `validation/May27_10_pressure_HEOS.csv`.
