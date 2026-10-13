@@ -256,3 +256,52 @@ The summary records the reported HTC uncertainty band separately from the
 point-fit result. It is not treated as an independently established confidence
 interval, nor are the point targets changed to obtain smaller roughness values.
 Water-side sensitivity results are in `validation/May27_10_water_sensitivity_HEOS.csv`.
+
+## Smooth-tube baseline comparison
+
+`Smooth_cases.csv` contains the 38 smooth runs from thesis Table 12, with source
+labels preserved. The comparison fixes e/D=0 and **does not fit HTC**. It uses
+the same assumed water inlet of 20.7 °C, water flow of 0.087 kg/s, baseline water
+correlation, and leakage assumptions. The CO2 inlet is inferred to match the
+reported mean bulk temperature. This is a conditional base-model comparison,
+not validation using independently measured inlet conditions.
+
+```bash
+python validate_smooth.py --workers 3 --segments 100
+```
+
+All 38 cases completed at 100 segments and satisfied energy/bulk constraints.
+One case is within 5% HTC (11-Apr: 217.15 predicted vs 212 reported, +2.43%).
+The mean absolute per-case percentage error is **46.96%**; 33 cases underpredict.
+The signed mean error is -42.83%. None are within the reported per-case HTC
+uncertainty bands under these shared assumptions. The 11-Apr case is borderline:
+2.43% error versus a reported 2.42% band, with rounded source inputs.
+
+A separate CO2-only check bypassed the water model and imposed the nominal
+2 or 3 kW/m² heat-flux group, inferred inlet/outlet from CO2 enthalpy balance and
+the reported mean, and evaluated the same zero-roughness CO2 correlation.
+Its mean absolute HTC percentage error is **45.14%**. For smooth peak May11_2:
+HTC is 622.42 vs 2268 W/(m² K), while the nominal-flux-implied inlet is 36.0186 °C,
+close to the paper's reported 36.01 °C (printed p.37). This is a diagnostic using
+nominal heat flux, not a substitute for exact per-case measured duty.
+
+The mismatch therefore occurs even without dimples and is not removed by
+bypassing the assumed water-side model in that diagnostic. It is not proof of
+experimental error or a definitive validation of the code. Thesis section 7.2 /
+Table 8 (printed pp.38–39) already reports 40–62% smooth-tube deviations for Liu,
+which it says agrees better than Dang–Hihara, and identifies mass flux below the
+correlations' validation ranges. These experiments also use a larger tube and
+lower nominal flux than Dang–Hihara's cited database.
+
+The thesis procedure (printed p.29) describes prechilling water for low-temperature
+runs and adjusting water temperature to reach the flux target. Accordingly,
+constant water temperature across every experimental case is an approximation.
+See `results/Smooth-tube-HTC-comparison.xlsx` for both checks and profiles;
+CSV values are in `validation/Smooth_zero_roughness_HEOS.csv` and
+`validation/Smooth_CO2_only_nominal_flux_HEOS.csv`.
+
+To reproduce the water-bypassed diagnostic:
+
+```bash
+python smooth_nominal_flux_check.py --segments 100
+```
