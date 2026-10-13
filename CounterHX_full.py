@@ -1,114 +1,157 @@
-# -*- coding: utf-8 -*-
-"""
-Compiler and main code for Counter flow Heat exchanger prediction ensure that input parameter CSV file is correct with
-conditions that are to be ran. Outputs are generated and stored in an Output.CSV file with each case having a 
-different sheet within the Output file.
-
-Inputs include: 
-    Mass flow rate (kg/s): m_CO2, m_H2O
-    Inlet Temperature (Ti): for CO2 and H2O
-    Operating Pressure (P): for CO2 and H2O
-    Heat Exchanger geometry: 
-            Diameter (mm)
-            wall thickness (mm)
-            thermal conductivity (W/m-K)
-            cooling channel thickness (mm)
-            length of Heat Exchanger (mm)
-            
-Outputs include: (at each segment along the pipe)
-    axial position along pipe
-    Bulk and Wall temperatures (K): for CO2 and H2O
-    Total Heat Transfered (W)
-    Heat FLux (W/m^2): for CO2 and H2O
-    Temperature difference between CO2 adn H2O (lmtd)
-    Overall heat transfer coefficeint U
-    Thermal resistances (K/W): R sCO2, R Wall, R H2O
-    Heat compacity (W/K): for CO2 and H2O
-    Heat Transfer Coeffcient (W/m^2-K): for CO2 and H2O
-    Fluid velocity (m/s): for CO2 and H2O
-    Pressure drop (Pa):
-        due to Viscous effects
-        due to acceleration effects
-"""
+"""Run cases or fit effective e/D using Spencer's bulk-to-wall LMTD HTC."""
+import argparse
+from pathlib import Path
 import pandas as pd
-import time
+from scipy.optimize import brentq
 from Counterflow_HX_4 import CO2_counter
 
-#df = pd.read_csv('Parameters.csv')
-#reading the input csv file and creating a dataframe with the operating conditions desired for each case
-name= 'Test'
 
-# Constant=False: compute Q from LMTD (required to match experiment). Use True only to impose fixed q.
-Constant = False
-# Whole section: one LMTD and one Q for full length (no segments). Set True to try lumped model.
-whole_section = False
-# Initial guess for q into CO2 (W/m²). Only used when Constant=False; should be near expected flux (e.g. ~2800 for Test 7a).
-q_CO2_i = -3000.0
-
-try:
-    df = pd.read_csv(f"{name}.csv", encoding="utf-8")
-except UnicodeDecodeError:
-    df = pd.read_csv(f"{name}.csv", encoding="cp1252")
-df.columns = [c.replace("\xa0", " ").strip() for c in df.columns]
-df.rename(columns={'P (Mpa)': 'P_CO2', 'P (atm)': 'P_H2O', 'T_CO2 (C)': 'T_CO2', 'T_H2O (C)': 'T_H2O',
-                      'D (mm)': 'D', 'wall thickness (mm)': 'wt','water gap (mm)': 'wg', 'L (mm)': 'L',
-                      'ep_max (e/Dh)': 'ep', 'Profile (Constant,Step,Sine,Linear)': 'pro','Steps/Harmonic (n)': 'p',
-                      'm_CO2 (kg/s)': 'm_CO2', 'm_H2O (kg/s)': 'm_H2O'}, inplace=True)
-# Accept m_CO2/m_H2O if already named that (no units in header)
-if 'm_CO2' not in df.columns:
-    for c in df.columns:
-        if 'm_CO2' in c or (c.strip().lower().startswith('m_') and 'co2' in c.lower()):
-            df.rename(columns={c: 'm_CO2'}, inplace=True)
-            break
-if 'm_H2O' not in df.columns:
-    for c in df.columns:
-        if 'm_H2O' in c or (c.strip().lower().startswith('m_') and 'h2o' in c.lower()):
-            df.rename(columns={c: 'm_H2O'}, inplace=True)
-            break
-if 'm_CO2' not in df.columns or 'm_H2O' not in df.columns:
-    raise ValueError("CSV must have mass flow rate columns 'm_CO2' and 'm_H2O' (kg/s). Current columns: " + str(list(df.columns)))
-# Optional heat leakage: linear model Q_leak = slope*(T_amb - T_water) + intercept (from your fit),
-# or U_amb model: CSV columns T_amb (C), U_amb (W/m2.K), d_outer_mm. Prefer linear if Q_leak_slope present.
-fullrun = []
-cases=len(df)
-Ts = time.time()
+def run_case(row, roughness=None, segments=100, verbose=False):
+    def optional(name, default=None):
+        value = row.get(name, default)
+        return default if pd.isna(value) else value
+    return CO2_counter(
+        row['m_CO2 (kg/s)'], row['T_CO2 (C)'], row['P (Mpa)'],
+        row['m_H2O (kg/s)'], row['T_H2O (C)'], row['P (atm)'],
+        row['D (mm)'], row['wall thickness (mm)'], row['water gap (mm)'],
+        row['L (mm)'], row['Kp'],
+        row['ep_max (e/Dh)'] if roughness is None else roughness,
+        row['Profile (Constant,Step,Sine,Linear)'], row['Steps/Harmonic (n)'],
+        False, -3000., T_ambient=optional('T_amb (C)', 25.),
+        U_amb=optional('U_amb', 0.), d_outer_mm=optional('d_outer_mm', 0.),
+        Q_leak_slope=optional('Q_leak_slope'),
+        Q_leak_intercept=optional('Q_leak_intercept', 0.),
+        segments=segments, verbose=verbose, max_iter=200)
 
 
-with pd.ExcelWriter(f"{name}-output.xlsx",engine="xlsxwriter") as writer:
-    for i in range(cases):
-        t0 = time.time()
-        profile = df.pro[i]
-        #Running Counter flow Heat Exchanger code for each case in the provided 
-        #data frame
-        print(
-            f"\nCase {i + 1}/{cases}: "
-            f"Profile = {df.pro[i]}, "
-            f"e/D = {df.ep[i]:.6f}",
-            flush=True
-        )
-        T_amb = df['T_amb (C)'].iloc[i] if 'T_amb (C)' in df.columns else 25.0
-        U_amb = df['U_amb'].iloc[i] if 'U_amb' in df.columns else 0.0
-        d_outer = df['d_outer_mm'].iloc[i] if 'd_outer_mm' in df.columns else 0.0
-        Q_leak_slope = df['Q_leak_slope'].iloc[i] if 'Q_leak_slope' in df.columns and pd.notna(df['Q_leak_slope'].iloc[i]) else None
-        Q_leak_intercept = float(df['Q_leak_intercept'].iloc[i]) if 'Q_leak_intercept' in df.columns and pd.notna(df['Q_leak_intercept'].iloc[i]) else 0.0
-        results = CO2_counter(df['m_CO2'].iloc[i],df.T_CO2[i],df.P_CO2[i],df['m_H2O'].iloc[i],df.T_H2O[i],df.P_H2O[i],
-                          df.D[i],df.wt[i],df.wg[i],df.L[i],df.Kp[i],df.ep[i],str(df.pro[i]),df.p[i],
-                          Constant,q_CO2_i,whole_section,T_ambient=T_amb,U_amb=U_amb,d_outer_mm=d_outer,
-                          Q_leak_slope=Q_leak_slope,Q_leak_intercept=Q_leak_intercept)
-        #save results to post process immediately
-        fullrun.append(results)
-         
-        #writing results to Excel file to be stored and saved for late
-        sheet = df.Case[i]
-        results.to_excel(writer, sheet_name=sheet, index=False)
-        #timing each iteration
-        t1 = time.time()
-        elapsed = t1-t0
-        print(f"Case {i+1} done in {elapsed:.1f} s", flush=True)
 
-Tf = time.time()
-seconds = Tf-Ts
-minutes= seconds/60
-print(f"\nAll done: {cases} case(s) in {seconds:.1f} s ({minutes:.2f} min)", flush=True)
-print(f"Output written to {name}-output.xlsx", flush=True)
-    
+def match_bulk_case(row, roughness, target_bulk, segments=100):
+    """Infer the unknown CO2 inlet for a measured endpoint-mean bulk temperature.
+
+    Water inlet remains the supplied condition. This is an inverse model,
+    not a recovered experimental measurement.
+    """
+    if not target_bulk > row['T_H2O (C)']:
+        raise ValueError('Target bulk temperature must exceed water inlet temperature')
+    cache = {}
+    def residual(inlet):
+        trial = row.copy()
+        trial['T_CO2 (C)'] = inlet
+        profile = run_case(trial, roughness, segments)
+        cache[inlet] = profile
+        return profile.attrs['summary']['CO2_mean_endpoint_C'] - target_bulk
+    lower = float(target_bulk)
+    upper = max(lower + 1., float(row['T_CO2 (C)']))
+    low = residual(lower)
+    high = residual(upper)
+    while low*high > 0 and upper < lower+20:
+        upper = min(lower+20, upper+2.)
+        high = residual(upper)
+    if low*high > 0:
+        raise ValueError('Could not bracket an inlet for the target bulk temperature')
+    inlet = brentq(residual, lower, upper, xtol=1e-5)
+    if inlet not in cache:
+        residual(inlet)
+    profile = cache[inlet]
+    profile.attrs['summary'].update(inferred_CO2_inlet_C=inlet,
+                                    target_bulk_C=target_bulk,
+                                    CO2_inlet_is_inferred=True)
+    if abs(profile.attrs['summary']['CO2_mean_endpoint_C']-target_bulk)>1e-4:
+        raise RuntimeError('Inferred inlet failed bulk-temperature acceptance tolerance')
+    return profile
+
+def fit_case(row, target, bounds=(0., .05), segments=100, target_bulk=None, allow_extrapolation=False):
+    """Bracket first; refuse out-of-range targets. Never fit unconverged solutions."""
+    if target <= 0 or not 0 <= bounds[0] < bounds[1] <= 1:
+        raise ValueError('Positive HTC target and 0 <= lower < upper <= 1 required')
+    if bounds[1] > .05 and not allow_extrapolation:
+        raise ValueError('Bounds above e/D=0.05 require explicit allow_extrapolation; these are empirical, not physical fits')
+    cache = {}
+    def evaluate(ep):
+        if ep not in cache:
+            cache[ep] = (run_case(row, ep, segments) if target_bulk is None
+                         else match_bulk_case(row, ep, target_bulk, segments))
+        return cache[ep].attrs['summary']['htc_spencer_W_m2K']-target
+    low, high = [evaluate(ep) for ep in bounds]
+    if low*high > 0:
+        raise ValueError(f'Target {target:g} not bracketed: HTC at e/D={bounds[0]:g} is '
+                         f'{low+target:.1f}; at {bounds[1]:g} is {high+target:.1f} W/(m² K). '
+                         'Check inputs and correlation applicability; do not force a match.')
+    ep = brentq(evaluate, *bounds, xtol=1e-7)
+    evaluate(ep)
+    result = cache[ep]
+    if abs(result.attrs['summary']['htc_spencer_W_m2K']-target)/target > .001:
+        raise RuntimeError('Fitted HTC failed the 0.1% acceptance tolerance')
+    return ep, result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--input', default='Test.csv')
+    parser.add_argument('--output', default='Test-output.xlsx')
+    parser.add_argument('--segments', type=int, default=100)
+    parser.add_argument('--match-bulk', action='store_true', help='Infer CO2 inlet to match reference mean_CO2_C')
+    parser.add_argument('--bulk-temp', type=float, help='Single-case measured endpoint-mean CO2 temperature (C)')
+    parser.add_argument('--roughness', type=float, help='Override CSV effective e/D')
+    parser.add_argument('--reference', help='Reference CSV keyed by Case, e.g. experimental_targets.csv')
+    parser.add_argument('--fit', action='store_true', help='Fit each target_htc_W_m2K in CSV')
+    parser.add_argument('--target-htc', type=float, help='Target HTC for a single-case CSV')
+    parser.add_argument('--allow-extrapolation', action='store_true', help='Allow empirical e/D fits beyond 0.05; not a physical roughness estimate')
+    parser.add_argument('--ep-min', type=float, default=0.)
+    parser.add_argument('--ep-max', type=float, default=.05)
+    args = parser.parse_args()
+    if args.fit and args.roughness is not None:
+        parser.error('--fit and --roughness cannot be combined')
+    df = pd.read_csv(args.input, encoding='utf-8-sig')
+    df.columns = df.columns.str.replace('\xa0',' ').str.strip()
+    if args.target_htc is not None and (not args.fit or len(df) != 1):
+        parser.error('--target-htc requires --fit and a single-case CSV')
+    if args.reference:
+        reference = pd.read_csv(args.reference)
+        if reference.Case.duplicated().any():
+            parser.error('Reference Case names must be unique')
+        # Keep experimental observations separate from solver inputs.
+        for _, ref in reference.iterrows():
+            for key in ['target_htc_W_m2K', 'mean_CO2_C', 'pressure_drop_psi']:
+                if key in ref:
+                    df.loc[df.Case == ref.Case, 'experimental_' + key] = ref[key]
+        if 'target_htc_W_m2K' not in df:
+            df['target_htc_W_m2K'] = df['experimental_target_htc_W_m2K']
+    if args.bulk_temp is not None and (not args.match_bulk or len(df) != 1):
+        parser.error('--bulk-temp requires --match-bulk and a single-case CSV')
+    summaries=[]
+    # Finish calculations before opening an output workbook, so a failed fit does not overwrite it.
+    results=[]
+    for _,row in df.iterrows():
+        target=None
+        target_bulk=None
+        if args.match_bulk:
+            target_bulk = (args.bulk_temp if args.bulk_temp is not None
+                           else row.get('target_mean_CO2_C', row.get('experimental_mean_CO2_C')))
+            if target_bulk is None or pd.isna(target_bulk):
+                parser.error('--match-bulk requires --bulk-temp or a matched reference mean_CO2_C')
+        if args.fit:
+            target=args.target_htc if args.target_htc is not None else row['target_htc_W_m2K']
+            ep,result=fit_case(row,target,(args.ep_min,args.ep_max),args.segments,target_bulk,args.allow_extrapolation)
+        else:
+            ep=row['ep_max (e/Dh)'] if args.roughness is None else args.roughness
+            result=(run_case(row,ep,args.segments,verbose=True) if target_bulk is None
+                    else match_bulk_case(row,ep,target_bulk,args.segments))
+        summary={'Case':row['Case'],'effective_e_over_D':ep,
+                 'roughness_extrapolated':bool(ep > .05),**result.attrs['summary']}
+        for key in ['experimental_target_htc_W_m2K', 'experimental_mean_CO2_C', 'experimental_pressure_drop_psi']:
+            if key in row and pd.notna(row[key]):
+                summary[key] = row[key]
+        if target is not None:
+            summary.update(target_htc_W_m2K=target,relative_htc_error=summary['htc_spencer_W_m2K']/target-1)
+        summaries.append(summary); results.append((row['Case'],result))
+        print(f"{row['Case']}: e/D={ep:.7g}, Spencer-definition HTC={summary['htc_spencer_W_m2K']:.1f}",flush=True)
+    with pd.ExcelWriter(args.output,engine='xlsxwriter') as writer:
+        for case,result in results:
+            result.to_excel(writer,sheet_name=str(case)[:31],index=False)
+        pd.DataFrame(summaries).to_excel(writer,sheet_name='Summary',index=False)
+    pd.DataFrame(summaries).to_csv(Path(args.output).with_suffix('.summary.csv'),index=False)
+
+
+if __name__=='__main__':
+    main()

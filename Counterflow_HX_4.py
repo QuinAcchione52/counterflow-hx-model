@@ -53,13 +53,14 @@ import CoolProp.CoolProp as CP
 from Correlations import DHC
 from Correlations import Gniel
 import math
+import os
 from scipy.optimize import brentq
 
 
 #%% function call
 def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, Kp, ep, pro, p, Constant, q_CO2_i,
                 whole_section=False, T_ambient=25., U_amb=0., d_outer_mm=0., Q_leak_slope=None, Q_leak_intercept=0.,
-                max_iter=100, tol_T=1e-4, tol_Q=1e-6, relax=0.7, verbose=True):
+                max_iter=100, tol_T=1e-4, tol_Q=1e-6, relax=0.7, verbose=True, segments=None):
     """
     New optional arguments (defaults keep CounterHX_full.py working unchanged):
         max_iter : maximum number of outer (correlation) iterations
@@ -80,6 +81,13 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
         7: "critical"
     }
 
+    if whole_section:
+        raise ValueError("whole_section is an unvalidated placeholder; use the segmented solver")
+    if min(m_dot_CO2, m_dot_H2O, D, wt, wg, L, Kp) <= 0:
+        raise ValueError("Flows and geometry must be positive; D is the inner diameter in mm")
+    if segments is not None and (segments < 1 or int(segments) != segments):
+        raise ValueError("segments must be a positive integer")
+
     # inputs Pipe Geometry
     d_CO2 = D   # Inner diameter (mm) of CO2 pipe [e.g. 13.3858]
     t = wt       # Wall thickness (mm) of CO2 pipe [e.g. 1.2446]
@@ -91,19 +99,19 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
     F1 = 'CO2' #Hot fluid
     T1 = T_CO2  # Inlet temperature (°C) [e.g. 34.37]
     P1 = P_CO2   # Operating pressure (MPa) [e.g. 8.2]
-    ASCO2 = CP.AbstractState('REFPROP',F1)
+    ASCO2 = CP.AbstractState(os.environ.get('HX_PROPERTY_BACKEND', 'HEOS'),F1)
 
     #Inputs Water
     F2 = "H2O" #Cooling fluid
     T2 = T_H2O  # Inlet temperature (°C) [e.g. 20.7]
     P2 = P_H2O   # Operating pressure (atm); ~1.05 atm for ambient cooling water
-    ASH2O = CP.AbstractState('REFPROP',F2)
+    ASH2O = CP.AbstractState(os.environ.get('HX_PROPERTY_BACKEND', 'HEOS'),F2)
 
     # other inputs
     ep_max_input = float(ep) if np.isscalar(ep) else float(np.ravel(ep)[0])
     fg = 0.02   #inital guess at friction factor
     pro_key = str(pro).strip().replace(' ', '')
-    n = round(int(L/10+1))      #number of points along pipe
+    n = int(segments) + 1 if segments is not None else max(2, int(round(L/10)) + 1)      #number of points along pipe
 
     # conversions: all internal calculations in SI (m, m², Pa, K)
     L = L*1E-3                  # length (mm → m)
@@ -128,84 +136,6 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
     T2 = T2+273.15        # H2O inlet (°C → K)
     P2 = P2*101325        # H2O pressure (atm → Pa)
     P1 = P1*1E6           # CO2 pressure (MPa → Pa)
-
-    # --- Whole test section (one LMTD, one Q for full length) ---
-    # NOTE: lumped placeholder; effectiveness and wall temperatures here are not physical.
-    if whole_section:
-        As_CO2_total = math.pi * d_CO2 * L
-        As_H2O_total = math.pi * do * L
-        R2_total = math.log(do / d_CO2) / (2 * math.pi * kp * L)
-        ep_val = float(ep) if np.isscalar(ep) else float(ep[0])
-        T_CO2_out_K = T1 - 5.0
-        T_H2O_out_K = T2 + 5.0
-        Q_total = 0.0
-        LMTD = 10.0
-        for _ in range(60):
-            dT1 = T1 - T_H2O_out_K
-            dT2 = T_CO2_out_K - T2
-            if dT1 <= 0 or dT2 <= 0:
-                break
-            if abs(dT1 - dT2) < 1e-6:
-                LMTD = (dT1 + dT2) / 2
-            else:
-                LMTD = (dT1 - dT2) / math.log(dT1 / dT2)
-            T_CO2_avg = (T1 + T_CO2_out_K) / 2
-            T_H2O_avg = (T2 + T_H2O_out_K) / 2
-            q_guess = -abs(Q_total / As_CO2_total) if Q_total != 0 else -3000.0
-            DH = DHC(T_CO2_avg, T_CO2_avg - 2, P1, d_CO2, G1, q_guess, F1, 0, ep_val, fg)
-            q_h2o_guess = abs(Q_total / As_H2O_total) if Q_total != 0 else 3000.0
-            Gne = Gniel(T_H2O_avg, T_H2O_avg + 2, P2, a, G2, da, L, q_h2o_guess, F2)
-            htc_co2 = max(DH.htc[0], 1.0)
-            htc_h2o = max(Gne.htc[0], 1.0)
-            R1 = 1 / (htc_co2 * As_CO2_total)
-            R3 = 1 / (htc_h2o * As_H2O_total)
-            U = 1 / As_CO2_total * (1 / (R1 + R2_total + R3))
-            Q_total = U * As_CO2_total * LMTD
-            h_CO2_in = CP.PropsSI('H', 'T', T1, 'P', P1, 'REFPROP::CO2')
-            h_CO2_out = h_CO2_in - Q_total / mdot_1
-            h_H2O_in = CP.PropsSI('H', 'T', T2, 'P', P2, 'REFPROP::H2O')
-            h_H2O_out = h_H2O_in + Q_total / mdot_2
-            try:
-                T_CO2_out_K = CP.PropsSI('T', 'H', h_CO2_out, 'P', P1, 'REFPROP::CO2')
-                T_H2O_out_K = CP.PropsSI('T', 'H', h_H2O_out, 'P', P2, 'REFPROP::H2O')
-            except Exception:
-                break
-        q_CO2_whole = Q_total / As_CO2_total
-        q_H2O_whole = -Q_total / As_H2O_total
-        n_wh = 2
-        x_wh = np.array([0.0, L])
-        plot_whole = pd.DataFrame({
-            'pos': x_wh,
-            'roughness': [ep_val] * n_wh,
-            'CO2b': [T1, T_CO2_out_K],
-            'CO2w': [T1 - 1, T_CO2_out_K - 1],
-            'H2Ob': [T_H2O_out_K, T2],
-            'H2Ow': [T_H2O_out_K + 1, T2 + 1],
-            'Q': [Q_total / 2, Q_total / 2],
-            'q_CO2': [q_CO2_whole, q_CO2_whole],
-            'q_H2O': [q_H2O_whole, q_H2O_whole],
-            'lmtd': [LMTD, LMTD],
-            'Nu_CO2': [DH.Nu[0], DH.Nu[0]],
-            'htc_CO2': [htc_co2, htc_co2],
-            'Nu_H2O': [Gne.Nu[0], Gne.Nu[0]],
-            'htc_H2O': [htc_h2o, htc_h2o],
-            'CO2_mCp': [mdot_1 * CP.PropsSI('C', 'T', T1, 'P', P1, 'REFPROP::CO2'), mdot_1 * CP.PropsSI('C', 'T', T_CO2_out_K, 'P', P1, 'REFPROP::CO2')],
-            'H2O_mCp': [mdot_2 * CP.PropsSI('C', 'T', T_H2O_out_K, 'P', P2, 'REFPROP::H2O'), mdot_2 * CP.PropsSI('C', 'T', T2, 'P', P2, 'REFPROP::H2O')],
-            'r_CO2': [R1, R1],
-            'r_cond': [R2_total, R2_total],
-            'r_H2O': [R3, R3],
-            'U': [U, U],
-            'CO2_visc': [0, 0], 'CO2_acc': [0, 0], 'CO2_tot': [0, 0], 'Ve_CO2': [G1 / CP.PropsSI('D', 'T', T1, 'P', P1, 'REFPROP::CO2'), 0],
-            'H2O_visc': [0, 0], 'H2O_acc': [0, 0], 'H2O_tot': [0, 0], 'Ve_H2O': [G2 / CP.PropsSI('D', 'T', T2, 'P', P2, 'REFPROP::H2O'), 0],
-            'CO2_dp_cumulative_psi': [0, 0],
-        })
-        plot_whole['C'] = plot_whole[['CO2_mCp', 'H2O_mCp']].min(axis=1) / plot_whole[['CO2_mCp', 'H2O_mCp']].max(axis=1)
-        plot_whole['NTU'] = (plot_whole['U'] * As_CO2_total) / plot_whole[['CO2_mCp', 'H2O_mCp']].min(axis=1)
-        plot_whole['effectiveness'] = 50.0
-        plot_whole['overall effectiveness'] = 50.0
-        print(f"Whole section: Q_total = {Q_total:.1f} W, q_CO2 = {q_CO2_whole:.0f} W/m², q_H2O = {abs(q_H2O_whole):.0f} W/m²")
-        print(f"  T_CO2 out = {T_CO2_out_K - 273.15:.2f} °C, T_H2O out = {T_H2O_out_K - 273.15:.2f} °C")
-        return plot_whole
 
     # ------------------------------------------------------------------
     # Discretization
@@ -261,7 +191,7 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
     elif pro_key == 'Linear':
         rough = ep_max_input * (x) / L
     elif pro_key == 'Sine':
-        rough = ep_max_input * np.sin(p * np.pi * x / L)
+        rough = ep_max_input * np.abs(np.sin(p * np.pi * x / L))
     else:
         raise ValueError(
             f"Unknown roughness profile '{pro}'. "
@@ -359,8 +289,12 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
                         break                         # property states already match Qk
                     Qk = Q_new
             except Exception:
+                if store_props:
+                    raise
                 return hw - h_H2O_in                  # trial guess ran out of property range
             if not (T_lo < Tc1 < T_hi and T_lo < Tw1 < T_hi):
+                if store_props:
+                    raise RuntimeError("Final march left the valid temperature bracket")
                 return hw1 - h_H2O_in                 # runaway trial; sign still points the right way
             if store_props:
                 Q[k] = Qk
@@ -380,6 +314,7 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
     U_prev = None
     Tw_out_prev = None
     for j in range(max_iter):
+        wall_prev = CO2['Tw'].copy()
         Tc_prev = CO2['Tb'].copy()
         Th2o_prev = H2O['Tb'].copy()
         Qtot_prev = Q[:nseg].sum()
@@ -395,9 +330,8 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
             Nu_CO2[k], htc_CO2[k] = DH.Nu[0], DH.htc[0]
             f_CO2[k], Tf_CO2[k] = DH.f[0], DH.Tf[0]
             Tw_inner = DH.Tw[0]
-            if k != 0:   # inlet node keeps wall = bulk, as in the original version
-                ASCO2.update(CP.PT_INPUTS, CO2['P'][k], Tw_inner)
-                store(CO2, k, ASCO2, 'w')
+            ASCO2.update(CP.PT_INPUTS, CO2['P'][k], Tw_inner)
+            store(CO2, k, ASCO2, 'w')
 
             ## Water side: Gnielinski (annulus); heat flux into water is -Q/As_H2O
             # Pass the FULL exchanger length: Gnielinski's (1 + (dh/L)^(2/3)) entrance factor is a
@@ -407,14 +341,12 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
                         -Qn[k] / As_H2O, F2)
             Nu_H2O[k], htc_H2O[k] = Gne.Nu[0], Gne.htc[0]
             f_H2O[k], Tf_H2O[k] = Gne.f[0], Gne.Tf[0]
-            if k != n - 1:   # water inlet node keeps wall = bulk, as in the original version
-                # Outer wall = inner wall minus conduction drop across the tube wall.
-                # Heat leaving CO2 through the wall = -Qn  ->  Tw_outer = Tw_inner + Qn*R2
-                Tw_outer = Tw_inner + Qn[k] * R2
-                Tw_clamp = max(274.0, min(450.0, Tw_outer))   # keep water liquid in REFPROP
-                ASH2O.update(CP.PT_INPUTS, H2O['P'][k], Tw_clamp)
-                store(H2O, k, ASH2O, 'w')
-
+            # Outer wall = inner wall minus conduction drop across the tube wall.
+            # Heat leaving CO2 through the wall = -Qn  ->  Tw_outer = Tw_inner + Qn*R2
+            Tw_outer = Tw_inner + Qn[k] * R2
+            Tw_clamp = max(274.0, min(450.0, Tw_outer))   # keep water liquid in REFPROP
+            ASH2O.update(CP.PT_INPUTS, H2O['P'][k], Tw_clamp)
+            store(H2O, k, ASH2O, 'w')
             # thermal resistances and U at node k (both sides at the same position)
             h1 = max(htc_CO2[k], 1.0)
             h3 = max(htc_H2O[k], 1.0)
@@ -469,13 +401,15 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
             Tw_out = brentq(resid_T, T_a, T_b, xtol=1e-6, rtol=1e-12, maxiter=200)
             Tw_out_prev = Tw_out
             ASH2O.update(CP.PT_INPUTS, H2O['P'][0], Tw_out)
-            march(ASH2O.hmass(), True)       # final march stores the solution profiles
+            inlet_residual = march(ASH2O.hmass(), True)  # final march stores the solution profiles
+            if abs(inlet_residual) > 1e-3:
+                raise RuntimeError("Final water inlet enthalpy residual exceeds 0.001 J/kg")
 
         # ---- 3. Convergence of the Picard loop ----
         dT_change = max(np.max(np.abs(CO2['Tb'] - Tc_prev)), np.max(np.abs(H2O['Tb'] - Th2o_prev)))
         Qtot = Q[:nseg].sum()
         dQ_rel = abs(Qtot - Qtot_prev) / max(abs(Qtot), 1e-12)
-        if j >= 1 and dT_change < tol_T and dQ_rel < tol_Q:
+        if j >= 1 and dT_change < tol_T and dQ_rel < tol_Q and np.max(np.abs(CO2['Tw']-wall_prev)) < tol_T:
             converged = True
             break
 
@@ -485,8 +419,7 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
         print(f"Counterflow solver: {n_sweeps} outer iterations ({status}; max dT change {dT_change:.2e} K, "
               f"rel dQ {dQ_rel:.2e})")
     if not converged:
-        print("WARNING: solver hit max_iter without converging. Try lowering relax (e.g. 0.4) "
-              "or raising max_iter.")
+        raise RuntimeError("Solver did not converge; lower relax or increase max_iter")
 
     # ------------------------------------------------------------------
     # Pressure drop and pumping power (on the converged state)
@@ -525,6 +458,7 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
         'pos'       : x,
         'roughness' : np.ravel(rough),
         'Re_CO2'    : Re_CO2b,
+        'Re_H2O'    : Re_H2Ob,
         'CO2b'      : CO2['Tb'],
         'CO2w'      : CO2['Tw'],
         'H2Ob'      : H2O['Tb'],
@@ -617,5 +551,15 @@ def CO2_counter(m_dot_CO2, T_CO2, P_CO2, m_dot_H2O, T_H2O, P_H2O, D, wt, wg, L, 
         if np.any(CO2['Tb'] - H2O['Tb'] <= 0):
             print("NOTE: CO2 bulk temperature falls to/below water temperature somewhere along the HX.")
 
+    from hx_metrics import summarize
+    plot.attrs['summary'] = summarize(plot, D, wt)
+    plot.attrs['summary'].update({
+        'property_backend': os.environ.get('HX_PROPERTY_BACKEND', 'HEOS'),
+        'iterations': n_sweeps, 'converged': converged,
+        'CO2_energy_residual_W': float(duty_CO2 + total_Q),
+        'water_energy_residual_W': float(duty_H2O + total_Q + total_Q_leak),
+    })
+    if verbose:
+        print(f"Spencer-definition HTC: {plot.attrs['summary']['htc_spencer_W_m2K']:.1f} W/(m²·K)")
     #%% return results
     return plot

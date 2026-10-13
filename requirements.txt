@@ -1,0 +1,7 @@
+CoolProp>=7,<9
+numpy>=2,<3
+pandas>=2.2,<4
+scipy>=1.12,<2
+xlsxwriter>=3,<4
+matplotlib>=3.8,<4
+pytest>=8,<10

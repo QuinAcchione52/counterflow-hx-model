@@ -9,6 +9,7 @@ from matplotlib.lines import Line2D
 name = 'Test'
 input_file = pd.read_csv(f"{name}.csv")
 output_file = pd.read_excel(f"{name}-output.xlsx", sheet_name=None)
+output_file.pop("Summary", None)  # comparison metrics are not an axial profile
 
 input_file.columns = [c.replace("\xa0", " ").strip() for c in input_file.columns]
 # Filename prefix from first case (e.g. T_CO2 and P for figures)
