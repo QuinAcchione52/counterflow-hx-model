@@ -1,0 +1,10 @@
+{
+  "cases": 40,
+  "paired_cases": 24,
+  "old_eD_median_all": 0.1709131047389454,
+  "old_eD_median_paired": 0.2525661947900185,
+  "new_eD_median_matched": 0.0172599448224789,
+  "median_paired_reduction_percent": 93.825143871727,
+  "new_below_smooth": 13,
+  "new_above_cap": 3
+}

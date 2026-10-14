@@ -1,0 +1,16 @@
+dataset,factor,input_column,n,Spearman_rho,Pearson_r
+Historical all 40,Reported mass flux,mass_flux_kg_m2_s,40,-0.36847091610949967,-0.323132488091764
+Historical all 40,Nominal flux group,nominal_heat_flux_W_m2,40,0.086629616364842,0.20166510759454878
+Historical all 40,Mean CO2 temperature,bulk_CO2_C,40,0.5936488584794315,0.49212391037823133
+Historical all 40,Temperature relative to Tpc,delta_Tpc_K,40,0.5622889305816136,0.4625522787329624
+Historical all 40,Inlet pressure,P (Mpa),40,0.24714990124039196,0.1683055159698502
+Historical paired 24,Reported mass flux,mass_flux_kg_m2_s,24,-0.2912590724823575,-0.3904341754993093
+Historical paired 24,Nominal flux group,nominal_heat_flux_W_m2,24,0.512792864360582,0.5246161486032689
+Historical paired 24,Mean CO2 temperature,bulk_CO2_C,24,0.2417391304347826,0.4282248370241684
+Historical paired 24,Temperature relative to Tpc,delta_Tpc_K,24,0.14956521739130432,0.3931897951839337
+Historical paired 24,Inlet pressure,P (Mpa),24,0.24483583966479192,0.22654503092563352
+New matched 24,Reported mass flux,mass_flux_kg_m2_s,24,-0.23370488450680185,-0.054582765343113
+New matched 24,Nominal flux group,nominal_heat_flux_W_m2,24,0.4761648026205405,0.4851544832255927
+New matched 24,Mean CO2 temperature,bulk_CO2_C,24,0.39999999999999997,0.015588405892039501
+New matched 24,Temperature relative to Tpc,delta_Tpc_K,24,0.37304347826086953,0.06337971760047183
+New matched 24,Inlet pressure,P (Mpa),24,-0.31833007927997814,-0.3911049298356278
