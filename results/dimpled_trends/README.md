@@ -91,3 +91,11 @@ overall count does not improve every individual case.
 For the matched subset, median e/D is **0.01314** in the nominal 2 kW/m² group
 (n=14), versus **0.02368** in the 3 kW/m² group (n=10). This group comparison is
 conditional on the same selection and correction-dependence limitations above.
+
+## Selected plots
+
+`Dimpled_Selected_Plots.pdf` is the concise two-page version requested for review.
+It contains only original report pages **5 and 6**: required e/D vs operating
+conditions, followed by temperature trends separated by source group. The full
+report and data remain available separately. The new-fit panels contain 24
+matched cases; the original panels contain all 40 historical fits.
