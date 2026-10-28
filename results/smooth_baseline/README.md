@@ -51,3 +51,18 @@ exact measured per-case heat flux (which is unavailable in the summary tables).
 `Dimpled_fine_grid_checks.csv` confirms the two example fits at 100 segments:
 May19_3 e/D=0.01052448, HTC=1862.00; May27_10 e/D=0.01531948,
 HTC=2642.00 W/(m² K). These remain conditional empirical fits.
+
+## Complete 40-case workbook
+
+`All_40_Dimpled_Corrected_Results.xlsx` collects all 40 targets, both bounded
+endpoint HTC predictions and all 40 smooth-trained multipliers in one main
+sheet. It also includes the full solver summary, source experimental data,
+assumed inputs, correction metadata, smooth held-out validation, two fine-grid
+checks and the 24 available matched axial profiles (32 sheets total).
+
+For 16 unfitted cases, final fitted e/D, duty, outlet, fitted HTC and pressure
+outputs remain blank. The workbook does not invent a selected state for an
+unbracketed case. Dimpled data use the final correction trained on all smooth
+cases; they are not held-out dimple predictions. Rebuild with
+`python analysis/export_dimpled_corrected_workbook.py` (pandas, xlsxwriter and
+openpyxl required; no solver rerun).
