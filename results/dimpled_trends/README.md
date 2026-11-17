@@ -99,3 +99,21 @@ It contains only original report pages **5 and 6**: required e/D vs operating
 conditions, followed by temperature trends separated by source group. The full
 report and data remain available separately. The new-fit panels contain 24
 matched cases; the original panels contain all 40 historical fits.
+
+## Temperature on the x-axis
+
+`eD_vs_Bulk_Temperature_by_Class.pdf` contains two views with reported mean CO2
+bulk temperature on x and fitted e/D on y, separated into the four source
+operating-condition classes. Page 1 shows all 40 original fits (red); page 2
+adds the 24 revised fits (blue). Unfitted revised cases are not assigned values.
+Both use common axes across classes. Individual PNG/PDF versions are saved as
+`eD_vs_Bulk_Temperature_Original_40.*` and
+`eD_vs_Bulk_Temperature_Original_and_Corrected.*`.
+
+The original-fit maxima occur at 34.87, 35.04, 34.59 and 35.59 degrees C for
+m12/q2, m12/q3, m15/q2 and m15/q3, respectively. Points fall at the hotter end
+of each class, suggesting a peaked pattern rather than a simple linear law.
+This is descriptive evidence from fitted parameters, not a validated physical
+roughness-temperature relation. `Temperature_by_class_statistics.csv` contains
+sample sizes, peak cases and exploratory rank/linear associations. Rebuild with
+`python analysis/plot_ed_vs_bulk_temperature.py`.
