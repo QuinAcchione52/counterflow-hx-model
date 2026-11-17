@@ -36,32 +36,37 @@ figures=[];stats=[]
 for compare in [False,True]:
  fig,axs=plt.subplots(2,2,figsize=(12.5,8),sharex=True,sharey=True)
  for ax,(group,r) in zip(axs.ravel(),d.groupby('test_group',sort=True)):
-  ax.scatter(r.bulk_CO2_C,r.old_fitted_eD,color='red',s=49,label=f'Original fits (n={len(r)})',zorder=3)
+  if not compare:
+   ax.scatter(r.bulk_CO2_C,r.old_fitted_eD,color='red',s=49,label=f'Original fits (n={len(r)})',zorder=3)
   if compare:
    p=r.dropna(subset=['new_fitted_eD'])
    ax.scatter(p.bulk_CO2_C,p.new_fitted_eD,color='blue',s=42,label=f'Corrected fits (n={len(p)})',zorder=4)
-  ax.axhline(.05,color='#666666',ls='--',lw=1,label='Reference e/D = 0.05')
+  if not compare:
+   ax.axhline(.05,color='#666666',ls='--',lw=1,label='Reference e/D = 0.05')
+  else:
+   above=int((p.new_fitted_eD>.01).sum())
+   ax.text(.98,.05,f'{above} of {len(p)} blue values above 0.01 (off-scale)',transform=ax.transAxes,ha='right',va='bottom',fontsize=8,color='#444444')
   ref=references[group]
   ax.axvline(ref['pseudocritical_temperature_C'],color='#00834B',ls='--',lw=1.6,zorder=2,
    label=f"Tpc = {ref['pseudocritical_temperature_C']:.2f} °C at {ref['reference_pressure_mean_MPa']:.3f} MPa")
   gmin,gmax=r.mass_flux_kg_m2_s.min(),r.mass_flux_kg_m2_s.max()
   q=r.nominal_heat_flux_W_m2.iloc[0]/1000
   ax.set_title(f'{group} | G = {gmin:g}–{gmax:g} kg/(m²·s) | nominal q″ = {q:g} kW/m²',fontsize=11,pad=10)
-  ax.set(xlim=(25,39.5),ylim=(0,.70),xlabel='Reported mean CO₂ bulk temperature (°C)',ylabel='Fitted effective e/D')
-  ax.set_xticks([26,28,30,32,34,36,38]);ax.set_yticks(np.arange(0,.71,.1));ax.grid(alpha=.18)
+  ax.set(xlim=(25,39.5),ylim=(0,.01) if compare else (0,.70),xlabel='Reported mean CO₂ bulk temperature (°C)',ylabel='Fitted effective e/D')
+  ax.set_xticks([26,28,30,32,34,36,38]);ax.set_yticks(np.linspace(0,.01,6) if compare else np.arange(0,.71,.1));ax.grid(alpha=.18)
   ax.legend(loc='upper left',fontsize=8,framealpha=.9)
   if not compare:
    peak=r.loc[r.old_fitted_eD.idxmax()]
    stats.append({'source_group':group,'n_original':len(r),'n_corrected':int(r.new_fitted_eD.notna().sum()),'Spearman_temperature_vs_original_eD':float(spearmanr(r.bulk_CO2_C,r.old_fitted_eD).statistic),'Pearson_temperature_vs_original_eD':float(pearsonr(r.bulk_CO2_C,r.old_fitted_eD).statistic),'largest_original_eD':peak.old_fitted_eD,'temperature_at_largest_eD_C':peak.bulk_CO2_C,'peak_case':peak.Case})
  fig.suptitle('Fitted e/D vs bulk CO₂ temperature for each operating-condition class',fontsize=16,y=.98)
- subtitle='Original 40 DH-based fits' if not compare else 'Original 40 DH-based fits (red) and revised smooth-corrected fits (blue; 24 matched cases)'
+ subtitle='Original 40 DH-based fits' if not compare else 'Revised smooth-corrected fits only (blue; 24 matched cases); y-axis zoom: 0–0.01'
  fig.text(.5,.935,subtitle,ha='center',fontsize=11)
  note='Effective e/D is fitted to HTC, not measured roughness. Points show individual runs; no trend law is fitted.'
- if compare:note+=' The 16 unfitted revised cases have no blue e/D point.'
+ if compare:note+=' Values above 0.01 are off-scale; 16 revised cases are unfitted.'
  fig.text(.5,.039,note,ha='center',fontsize=8.5)
  fig.text(.5,.018,'Green dashed line: CO₂ Cp maximum at each class mean inlet pressure (HEOS); individual runs have pressure-dependent Tpc.',ha='center',fontsize=8.5)
  fig.tight_layout(rect=(0,.055,1,.91))
- stem='eD_vs_Bulk_Temperature_Original_and_Corrected' if compare else 'eD_vs_Bulk_Temperature_Original_40'
+ stem='eD_vs_Bulk_Temperature_Corrected_Blue_0_to_001' if compare else 'eD_vs_Bulk_Temperature_Original_40'
  for extension in ['png','pdf']:fig.savefig(OUT/(stem+'.'+extension),dpi=220,bbox_inches='tight')
  figures.append(fig)
 with PdfPages(OUT/'eD_vs_Bulk_Temperature_by_Class.pdf') as pdf:

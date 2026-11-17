@@ -11,8 +11,9 @@ Keep these two workbooks in Downloads (or select them when prompted):
 The additional figures reproduce the supplied temperature PDF: four source
 classes, reported bulk temperature on x, fitted e/D on y, red original fits,
 blue available revised fits, and green dashed pressure-dependent pseudocritical
-reference lines. Figure 7 has all 40 original fits; Figure 8 overlays the 24
-revised fits. Unfitted revised values remain absent, not zero.
+reference lines. Figure 7 has all 40 original fits; Figure 8 shows only the 24
+revised fits, with y limits 0..0.01. Nineteen values are above this display
+range; five are visible. Off-scale counts are labeled per panel. Unfitted revised values remain absent, not zero.
 
 The four HEOS Cp-maximum references are embedded so CoolProp is not required in
 MATLAB. Each is calculated at the mean pressure of all cases in its class;

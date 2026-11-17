@@ -195,7 +195,7 @@ hold off;
 
 %% Figures 7 and 8: Bulk-temperature plots matching the supplied PDF
 % Figure 7: all 40 original fitted e/D values (red).
-% Figure 8: original fits (red) plus the 24 valid revised fits (blue).
+% Figure 8: revised fits only (blue), y-axis 0..0.01; off-scale counts labeled.
 % Do NOT filter original fits using 'valid': that would omit original cases
 % whose revised e/D could not be fitted.
 %
@@ -236,10 +236,10 @@ for overlayMode = 0:1
         subtitleText = 'Original 40 DH-based fitted values';
         outputStem = 'eD_vs_Bulk_Temperature_Original_40';
     else
-        figureName = 'Original and Corrected Fits vs Bulk Temperature';
-        subtitleText = ['Original fits (red) and revised smooth-corrected fits ' ...
-            '(blue; 24 matched cases)'];
-        outputStem = 'eD_vs_Bulk_Temperature_Original_and_Corrected';
+        figureName = 'Corrected Fits Only vs Bulk Temperature';
+        subtitleText = ['Revised smooth-corrected fits only (blue; 24 matched cases); ' ...
+            'y-axis zoom: 0 to 0.01'];
+        outputStem = 'eD_vs_Bulk_Temperature_Corrected_Blue_0_to_001';
     end
     fig = figure('Color','w','Name',figureName, ...
         'Position',[100 100 1400 850]);
@@ -248,15 +248,24 @@ for overlayMode = 0:1
         ax = subplot(2,2,k); hold(ax,'on');
         idxOld = oldValid & group == groups(k);
         idxNew = newTempValid & group == groups(k);
-        scatter(ax,Tco2(idxOld),oldEDmatched(idxOld),65,'r','filled', ...
-            'DisplayName',sprintf('Original fits (n=%d)',nnz(idxOld)));
+        if overlayMode == 0
+            scatter(ax,Tco2(idxOld),oldEDmatched(idxOld),65,'r','filled', ...
+                'DisplayName',sprintf('Original fits (n=%d)',nnz(idxOld)));
+        end
         if overlayMode == 1
             scatter(ax,Tco2(idxNew),eD(idxNew),60,'b','filled', ...
                 'DisplayName',sprintf('Corrected fits (n=%d)',nnz(idxNew)));
         end
 
-        yline(ax,0.05,'--','Color',[0.4 0.4 0.4],'LineWidth',1.1, ...
-            'DisplayName','Reference e/D = 0.05');
+        if overlayMode == 0
+            yline(ax,0.05,'--','Color',[0.4 0.4 0.4],'LineWidth',1.1, ...
+                'DisplayName','Reference e/D = 0.05');
+        else
+            above = nnz(idxNew & eD > 0.01);
+            text(ax,0.98,0.05,sprintf('%d of %d blue values above 0.01 (off-scale)', ...
+                above,nnz(idxNew)),'Units','normalized', ...
+                'HorizontalAlignment','right','FontSize',8);
+        end
         xline(ax,pseudoCriticalC(k),'--','Color',[0 0.51 0.29], ...
             'LineWidth',1.8, ...
             'DisplayName',sprintf('T_{pc} = %.2f C at %.3f MPa', ...
@@ -270,8 +279,12 @@ for overlayMode = 0:1
             'FontSize',10);
         xlabel(ax,'Reported mean CO_2 bulk temperature (°C)');
         ylabel(ax,'Fitted effective e/D');
-        xlim(ax,[25 39.5]); ylim(ax,[0 0.70]);
-        xticks(ax,26:2:38); yticks(ax,0:0.1:0.7);
+        xlim(ax,[25 39.5]); xticks(ax,26:2:38);
+        if overlayMode == 0
+            ylim(ax,[0 0.70]); yticks(ax,0:0.1:0.7);
+        else
+            ylim(ax,[0 0.01]); yticks(ax,0:0.002:0.01);
+        end
         grid(ax,'on'); box(ax,'on');
         legend(ax,'Location','northwest','FontSize',8);
         hold(ax,'off');
@@ -282,7 +295,7 @@ for overlayMode = 0:1
     noteText = ['Green line: CO_2 Cp maximum at each class mean inlet pressure (HEOS). ' ...
         'Individual runs have pressure-dependent Tpc. e/D is fitted, not measured roughness.'];
     if overlayMode == 1
-        noteText = [noteText ' The 16 unfitted revised cases have no blue e/D point.'];
+        noteText = [noteText ' Values above 0.01 are off-scale; 16 revised cases are unfitted.'];
     end
     annotation(fig,'textbox',[0.07 0.005 0.86 0.045], ...
         'String',noteText,'EdgeColor','none','HorizontalAlignment','center', ...

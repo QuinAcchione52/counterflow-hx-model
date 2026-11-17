@@ -127,3 +127,14 @@ and therefore different pseudocritical temperatures. Full pressure/reference
 values and per-class pressure-range endpoints are recorded in
 `Pseudocritical_temperature_references.csv`. Rebuilding this plot requires
 CoolProp in addition to the plotting dependencies.
+
+## Separated red and blue figures
+
+The current `eD_vs_Bulk_Temperature_by_Class.pdf` has original red fits on page 1
+and corrected blue-only fits on page 2, with the requested y-axis 0..0.01.
+The standalone blue plot is `eD_vs_Bulk_Temperature_Corrected_Blue_0_to_001.pdf`
+(and PNG). Only five of 24 corrected fits lie in this visible range; 19 are
+off-scale, labeled per panel (6, 4, 4, 5). No data values were removed or changed.
+The older overlay files remain archived under `Original_and_Corrected`. Green
+pseudocritical lines remain in both figures. The MATLAB script uses the same
+separation and axis limits in Figures 7 and 8.
