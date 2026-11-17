@@ -195,7 +195,7 @@ hold off;
 
 %% Figures 7 and 8: Bulk-temperature plots matching the supplied PDF
 % Figure 7: all 40 original fitted e/D values (red).
-% Figure 8: revised fits only (blue), y-axis 0..0.01; off-scale counts labeled.
+% Figure 8: revised fits only (blue), y-axis 0..0.1.
 % Do NOT filter original fits using 'valid': that would omit original cases
 % whose revised e/D could not be fitted.
 %
@@ -238,8 +238,8 @@ for overlayMode = 0:1
     else
         figureName = 'Corrected Fits Only vs Bulk Temperature';
         subtitleText = ['Revised smooth-corrected fits only (blue; 24 matched cases); ' ...
-            'y-axis zoom: 0 to 0.01'];
-        outputStem = 'eD_vs_Bulk_Temperature_Corrected_Blue_0_to_001';
+            'y-axis: 0 to 0.1'];
+        outputStem = 'eD_vs_Bulk_Temperature_Corrected_Blue_0_to_01';
     end
     fig = figure('Color','w','Name',figureName, ...
         'Position',[100 100 1400 850]);
@@ -261,10 +261,12 @@ for overlayMode = 0:1
             yline(ax,0.05,'--','Color',[0.4 0.4 0.4],'LineWidth',1.1, ...
                 'DisplayName','Reference e/D = 0.05');
         else
-            above = nnz(idxNew & eD > 0.01);
-            text(ax,0.98,0.05,sprintf('%d of %d blue values above 0.01 (off-scale)', ...
-                above,nnz(idxNew)),'Units','normalized', ...
-                'HorizontalAlignment','right','FontSize',8);
+            above = nnz(idxNew & eD > 0.1);
+            if above > 0
+                text(ax,0.98,0.05,sprintf('%d of %d blue values above 0.1 (off-scale)', ...
+                    above,nnz(idxNew)),'Units','normalized', ...
+                    'HorizontalAlignment','right','FontSize',8);
+            end
         end
         xline(ax,pseudoCriticalC(k),'--','Color',[0 0.51 0.29], ...
             'LineWidth',1.8, ...
@@ -283,7 +285,7 @@ for overlayMode = 0:1
         if overlayMode == 0
             ylim(ax,[0 0.70]); yticks(ax,0:0.1:0.7);
         else
-            ylim(ax,[0 0.01]); yticks(ax,0:0.002:0.01);
+            ylim(ax,[0 0.1]); yticks(ax,0:0.02:0.1);
         end
         grid(ax,'on'); box(ax,'on');
         legend(ax,'Location','northwest','FontSize',8);
@@ -295,7 +297,7 @@ for overlayMode = 0:1
     noteText = ['Green line: CO_2 Cp maximum at each class mean inlet pressure (HEOS). ' ...
         'Individual runs have pressure-dependent Tpc. e/D is fitted, not measured roughness.'];
     if overlayMode == 1
-        noteText = [noteText ' Values above 0.01 are off-scale; 16 revised cases are unfitted.'];
+        noteText = [noteText ' All 24 fitted values are within the displayed range; 16 revised cases are unfitted.'];
     end
     annotation(fig,'textbox',[0.07 0.005 0.86 0.045], ...
         'String',noteText,'EdgeColor','none','HorizontalAlignment','center', ...

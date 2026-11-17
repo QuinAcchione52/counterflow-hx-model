@@ -138,3 +138,11 @@ off-scale, labeled per panel (6, 4, 4, 5). No data values were removed or change
 The older overlay files remain archived under `Original_and_Corrected`. Green
 pseudocritical lines remain in both figures. The MATLAB script uses the same
 separation and axis limits in Figures 7 and 8.
+
+### Corrected blue-axis request: 0 to 0.1
+
+The current two-page PDF now uses **0..0.1** for its blue-only second page,
+showing all 24 fitted values. The red-only first page is retained. The standalone
+blue files are `eD_vs_Bulk_Temperature_Corrected_Blue_0_to_01.pdf` and `.png`.
+The older `0_to_001` files retain the superseded 0..0.01 zoom as an archive;
+they are not the current requested view. MATLAB Figure 8 now uses 0..0.1 too.
