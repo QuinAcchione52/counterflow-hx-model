@@ -1,0 +1,8 @@
+{
+  "cases": 40,
+  "targets_bracketed_0_to_005": 0,
+  "eD005_MAE_percent": 99.12038463227948,
+  "eD005_experiment_to_model_ratio_min": 69.53778320610286,
+  "eD005_experiment_to_model_ratio_max": 218.08922443733317,
+  "saved_profile_max_reintegration_error_Pa": 1.8207657603852567e-13
+}

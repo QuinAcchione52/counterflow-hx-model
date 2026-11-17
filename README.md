@@ -390,3 +390,14 @@ $env:HX_PROPERTY_BACKEND = "HEOS"
 Download the complete updated repository so the helper modules and model JSON
 are available together. Omitting `--smooth-baseline-model` keeps the baseline
 uncorrected; HEOS model coefficients are not interchangeable with REFPROP.
+
+## Pressure-drop audit
+
+`results/pressure_audit/Pressure_drop_audit_all_40.xlsx` contains a separate
+40-case hydraulic audit. It preserves the HTC calibration, checks the pressure
+integration against the 24 saved profiles, and evaluates hydraulic e/D=0/.05
+on fixed thermal states. The 16 unmatched cases use explicitly labeled smooth
+thermal baseline states. Experimental targets are not bracketed by these
+hydraulic predictions; no pressure multiplier or extra loss is forced to fit.
+See `results/pressure_audit/README.md` for results and the unresolved pressure
+unit/tap-span checks required before calibration.
