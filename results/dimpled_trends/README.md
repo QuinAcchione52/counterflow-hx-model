@@ -117,3 +117,13 @@ This is descriptive evidence from fitted parameters, not a validated physical
 roughness-temperature relation. `Temperature_by_class_statistics.csv` contains
 sample sizes, peak cases and exploratory rank/linear associations. Rebuild with
 `python analysis/plot_ed_vs_bulk_temperature.py`.
+
+The temperature plots now include a green dashed pseudocritical-temperature
+reference in every panel: the HEOS CO2 constant-pressure heat-capacity maximum
+at that class's arithmetic-mean inlet pressure. The references are 34.96, 35.05,
+34.76 and 34.95 °C for m12/q2, m12/q3, m15/q2 and m15/q3, respectively. This is
+not the fixed critical temperature; individual runs have different pressures
+and therefore different pseudocritical temperatures. Full pressure/reference
+values and per-class pressure-range endpoints are recorded in
+`Pseudocritical_temperature_references.csv`. Rebuilding this plot requires
+CoolProp in addition to the plotting dependencies.

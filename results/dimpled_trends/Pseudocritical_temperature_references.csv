@@ -1,0 +1,5 @@
+source_group,reference_pressure_mean_MPa,pseudocritical_temperature_C,pressure_min_MPa,pressure_max_MPa,case_Tpc_min_C,case_Tpc_max_C,backend,definition
+m12/q2,8.048454545454545,34.95584910688052,7.927,8.158,34.24548688144438,35.58904585961761,HEOS,Cp maximum at group arithmetic-mean inlet pressure
+m12/q3,8.0639,35.04559676121892,7.953,8.158,34.39820984623174,35.58904585961761,HEOS,Cp maximum at group arithmetic-mean inlet pressure
+m15/q2,8.015555555555556,34.764202319169044,7.947,8.126,34.29108176524727,35.302985167592,HEOS,Cp maximum at group arithmetic-mean inlet pressure
+m15/q3,8.0473,34.949131746483374,7.933,8.166,34.28075940814915,35.52689997543985,HEOS,Cp maximum at group arithmetic-mean inlet pressure
